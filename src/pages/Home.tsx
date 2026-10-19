@@ -56,7 +56,6 @@ export default function Home() {
               const end = new Date(r.ends_at).getTime()
               const open = now >= start && now <= end
               const upcoming = now < start
-              const closed = now > end
               const submitted = submittedAt[r.id]
               return (
                 <li key={r.id} className="card">
