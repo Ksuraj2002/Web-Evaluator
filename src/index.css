@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+body { background: #1e1e1e; color: #cccccc; }
+
+/* Thin VS Code-ish scrollbars */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: #424242; border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #555; }
+
+input, select, textarea, button { font-family: inherit; }
+
+.btn        { @apply px-3 py-1.5 rounded bg-vs-accent text-white text-sm hover:opacity-90 disabled:opacity-50; }
+.btn-ghost  { @apply px-3 py-1.5 rounded text-sm hover:bg-vs-panel text-vs-text border border-vs-border; }
+.input      { @apply bg-vs-panel border border-vs-border rounded px-2 py-1 text-sm text-vs-text focus:outline-none focus:border-vs-accent w-full; }
+.label      { @apply block text-xs text-vs-mute mb-1 uppercase tracking-wide; }
+.card       { @apply bg-vs-sidebar border border-vs-border rounded p-4; }
+
+/* Minimal typography for rendered markdown (we don't ship @tailwindcss/typography) */
+.prose-md             { @apply text-sm leading-relaxed text-vs-text break-words; }
+.prose-md h1          { @apply text-base font-semibold mt-3 mb-1.5 text-white; }
+.prose-md h2          { @apply text-sm font-semibold mt-3 mb-1.5 text-white uppercase tracking-wide; }
+.prose-md h3          { @apply text-sm font-semibold mt-2 mb-1 text-vs-text; }
+.prose-md p           { @apply my-1.5; }
+.prose-md ul          { @apply list-disc pl-5 my-1.5 space-y-0.5; }
+.prose-md ol          { @apply list-decimal pl-5 my-1.5 space-y-0.5; }
+.prose-md li > p      { @apply my-0; }
+.prose-md a           { @apply text-vs-accent hover:underline; }
+.prose-md code        { @apply bg-vs-panel border border-vs-border rounded px-1 py-0.5 text-[12px] font-mono; }
+.prose-md pre         { @apply bg-vs-bg border border-vs-border rounded p-3 my-2 overflow-auto; }
+.prose-md pre code    { @apply bg-transparent border-0 p-0 text-xs; }
+.prose-md blockquote  { @apply border-l-2 border-vs-accent/60 pl-3 text-vs-mute italic my-2; }
+.prose-md hr          { @apply border-vs-border my-4; }
+.prose-md img         { @apply max-w-full rounded my-2; }
+.prose-md table       { @apply border-collapse my-2 text-xs w-full; }
+.prose-md th, .prose-md td { @apply border border-vs-border px-2 py-1 text-left; }
+.prose-md th          { @apply bg-vs-panel; }
+.prose-md strong      { @apply font-semibold text-white; }
+.prose-md input[type="checkbox"] { @apply mr-1.5 align-middle; }
+
+/* Larger reader variant used by the Expand modal */
+.prose-md-lg             { @apply text-[15px] leading-[1.75] text-vs-text; }
+.prose-md-lg h1          { @apply text-2xl font-bold mt-6 mb-3 text-white; }
+.prose-md-lg h2          { @apply text-xl font-semibold mt-6 mb-3 text-white; }
+.prose-md-lg h3          { @apply text-lg font-semibold mt-4 mb-2 text-white; }
+.prose-md-lg p           { @apply my-3; }
+.prose-md-lg ul          { @apply list-disc pl-6 my-3 space-y-1.5; }
+.prose-md-lg ol          { @apply list-decimal pl-6 my-3 space-y-1.5; }
+.prose-md-lg a           { @apply text-vs-accent hover:underline; }
+.prose-md-lg code        { @apply bg-vs-panel border border-vs-border rounded px-1.5 py-0.5 text-[13px] font-mono; }
+.prose-md-lg pre         { @apply bg-vs-bg border border-vs-border rounded p-4 my-4 overflow-auto; }
+.prose-md-lg pre code    { @apply bg-transparent border-0 p-0 text-sm; }
+.prose-md-lg blockquote  { @apply border-l-4 border-vs-accent pl-4 text-vs-text italic my-4 bg-vs-bg/50 py-2 rounded-r; }
+.prose-md-lg hr          { @apply border-vs-border my-6; }
+.prose-md-lg img         { @apply max-w-full rounded-lg my-4 shadow-md; }
+.prose-md-lg table       { @apply border-collapse my-4 w-full; }
+.prose-md-lg th, .prose-md-lg td { @apply border border-vs-border px-3 py-2 text-left; }
+.prose-md-lg th          { @apply bg-vs-panel text-white; }
+.prose-md-lg strong      { @apply font-semibold text-white; }

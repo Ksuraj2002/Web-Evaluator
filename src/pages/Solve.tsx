@@ -1,0 +1,461 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useParams, useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth'
+import CodeEditor from '../components/CodeEditor'
+import Preview from '../components/Preview'
+import Markdown from '../components/Markdown'
+import type { Assignment, FileMap, Project, ProjectAsset } from '../lib/types'
+
+type AssignmentRow = Assignment & { project: Project }
+
+const DEFAULT_FILES: FileMap = {
+  'index.html': '',
+  'styles.css': '',
+  'script.js': '',
+}
+
+function draftKey(id: string) { return `web-eval:draft:${id}` }
+
+export default function Solve() {
+  const { assignmentId } = useParams()
+  const nav = useNavigate()
+  const { profile } = useAuth()
+
+  const [assignment, setAssignment] = useState<AssignmentRow | null>(null)
+  const [assets, setAssets] = useState<ProjectAsset[]>([])
+  const [files, setFiles] = useState<FileMap>(DEFAULT_FILES)
+  const [folders, setFolders] = useState<string[]>([])  // empty folders the student made
+  const [active, setActive] = useState<string>('index.html')
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [remaining, setRemaining] = useState<string>('')
+  const [problemOpen, setProblemOpen] = useState(false)   // fullscreen reader
+  const [problemCollapsed, setProblemCollapsed] = useState(false)
+  const [autoSubmitted, setAutoSubmitted] = useState<null | 'ok' | 'fail'>(null)
+
+  // Keep latest files/profile for the auto-submit timer without re-arming it.
+  const filesRef = useRef(files)
+  useEffect(() => { filesRef.current = files }, [files])
+  const didSubmitRef = useRef(false)
+  const warnedRef = useRef(false)
+  const [warnLast60, setWarnLast60] = useState(false)
+
+  // Fetch assignment + project + assets
+  useEffect(() => {
+    (async () => {
+      if (!assignmentId) return
+      const { data, error } = await supabase
+        .from('assignments')
+        .select('*, project:projects(*)')
+        .eq('id', assignmentId)
+        .maybeSingle()
+      if (error) { setErr(error.message); setLoading(false); return }
+      if (!data) { setErr('Assignment not found or not visible'); setLoading(false); return }
+      const row = data as unknown as AssignmentRow
+      setAssignment(row)
+
+      const { data: a } = await supabase
+        .from('project_assets')
+        .select('*')
+        .eq('project_id', row.project_id)
+      setAssets((a as ProjectAsset[]) || [])
+
+      // Load draft from localStorage else starter files
+      const draft = localStorage.getItem(draftKey(assignmentId))
+      const starter = { ...DEFAULT_FILES, ...(row.project.starter_files || {}) }
+      if (draft) {
+        try {
+          const parsed = JSON.parse(draft)
+          // Backwards compat: old drafts were just FileMap
+          if (parsed.files) { setFiles(parsed.files); setFolders(parsed.folders || []) }
+          else setFiles(parsed as FileMap)
+        } catch { setFiles(starter) }
+      } else setFiles(starter)
+      setLoading(false)
+    })()
+  }, [assignmentId])
+
+  // Persist draft (files + empty folders)
+  useEffect(() => {
+    if (!assignmentId || loading) return
+    localStorage.setItem(draftKey(assignmentId), JSON.stringify({ files, folders }))
+  }, [files, folders, assignmentId, loading])
+
+  // Esc closes the problem modal
+  useEffect(() => {
+    if (!problemOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setProblemOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [problemOpen])
+
+  // Live countdown to ends_at — also fires auto-submit when it hits 0.
+  useEffect(() => {
+    if (!assignment || !profile) return
+    const end = new Date(assignment.ends_at).getTime()
+    const tick = () => {
+      const ms = end - Date.now()
+      if (ms <= 0) {
+        setRemaining('Time up')
+        if (!didSubmitRef.current) {
+          didSubmitRef.current = true
+          void autoSubmit()
+        }
+        return
+      }
+      const h = Math.floor(ms / 3_600_000)
+      const m = Math.floor((ms % 3_600_000) / 60_000)
+      const s = Math.floor((ms % 60_000) / 1_000)
+      setRemaining(`${h}h ${m}m ${s}s`)
+      // One-time nudge at ~60 seconds left so students know auto-submit is coming.
+      if (ms <= 60_000 && !warnedRef.current) {
+        warnedRef.current = true
+        // Non-blocking toast via title + a flash in the header is enough;
+        // we also show a dedicated banner below.
+        setWarnLast60(true)
+      }
+    }
+    tick()
+    const t = setInterval(tick, 1000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignment, profile])
+
+  async function autoSubmit() {
+    if (!assignment || !profile) return
+    const { error } = await supabase
+      .from('submissions')
+      .insert({ assignment_id: assignment.id, student_id: profile.id, files: filesRef.current })
+    if (error) {
+      setAutoSubmitted('fail')
+      // Last-ditch backup: dump the draft so the student can recover it.
+      try {
+        localStorage.setItem(
+          `web-eval:expired:${assignment.id}`,
+          JSON.stringify({ files: filesRef.current, at: new Date().toISOString() })
+        )
+      } catch {}
+    } else {
+      setAutoSubmitted('ok')
+      try { localStorage.removeItem(draftKey(assignment.id)) } catch {}
+    }
+  }
+
+  const fileNames = useMemo(() => Object.keys(files), [files])
+
+  // Group files into a flat folder tree.
+  const tree = useMemo(() => {
+    const g = new Map<string, string[]>()
+    for (const name of fileNames) {
+      const i = name.lastIndexOf('/')
+      const dir = i === -1 ? '' : name.slice(0, i)
+      if (!g.has(dir)) g.set(dir, [])
+      g.get(dir)!.push(name)
+    }
+    // Include empty folders the student created
+    for (const f of folders) if (!g.has(f)) g.set(f, [])
+    return Array.from(g.entries()).sort((a, b) =>
+      a[0] === '' ? -1 : b[0] === '' ? 1 : a[0].localeCompare(b[0])
+    )
+  }, [fileNames, folders])
+
+  function cleanPath(p: string) {
+    return p.split('/').map(s => s.trim()).filter(Boolean).join('/')
+  }
+
+  function updateFile(name: string, v: string) {
+    setFiles(f => ({ ...f, [name]: v }))
+  }
+  function addFile(preselectedDir = '') {
+    const base = preselectedDir ? `${preselectedDir}/` : ''
+    const name = prompt(`New file name (e.g. ${base}about.html, ${base}extra.css):`, base)?.trim()
+    if (!name) return
+    const clean = cleanPath(name)
+    if (!clean) return
+    if (files[clean] != null) return alert('That file already exists')
+    setFiles(f => ({ ...f, [clean]: '' }))
+    setActive(clean)
+  }
+  function addFolder() {
+    const raw = prompt('New folder (e.g. components or styles/mobile):')?.trim()
+    if (!raw) return
+    const clean = cleanPath(raw)
+    if (!clean) return
+    setFolders(fs => fs.includes(clean) ? fs : [...fs, clean])
+  }
+  function removeFile(name: string) {
+    if (['index.html', 'styles.css', 'script.js'].includes(name)) return alert('Cannot delete default files')
+    if (!confirm(`Delete ${name}?`)) return
+    setFiles(f => { const n = { ...f }; delete n[name]; return n })
+    if (active === name) setActive('index.html')
+  }
+  function removeFolder(dir: string) {
+    const inside = fileNames.filter(n => n.startsWith(dir + '/'))
+    if (inside.length && !confirm(`Delete folder "${dir}" and its ${inside.length} file(s)?`)) return
+    if (!inside.length && !confirm(`Delete empty folder "${dir}"?`)) return
+    setFiles(f => {
+      const n = { ...f }
+      for (const name of inside) delete n[name]
+      return n
+    })
+    setFolders(fs => fs.filter(x => x !== dir && !x.startsWith(dir + '/')))
+    if (inside.includes(active)) setActive('index.html')
+  }
+
+  async function submit() {
+    if (!assignment || !profile) return
+    const end = new Date(assignment.ends_at).getTime()
+    const start = new Date(assignment.starts_at).getTime()
+    const now = Date.now()
+    if (now < start) return alert('Not open yet')
+    if (now > end) return alert('Submission window closed')
+    if (!confirm('Submit this version for evaluation?')) return
+    setSubmitting(true)
+    const { error } = await supabase
+      .from('submissions')
+      .insert({ assignment_id: assignment.id, student_id: profile.id, files })
+    setSubmitting(false)
+    if (error) return alert(error.message)
+    didSubmitRef.current = true
+    localStorage.removeItem(draftKey(assignment.id))
+    alert('Submitted!')
+    nav('/')
+  }
+
+  if (loading) return <div className="p-6 text-vs-mute">Loading…</div>
+  if (err) return <div className="p-6 text-red-400">{err}</div>
+  if (!assignment) return null
+
+  return (
+    <div className="h-screen flex flex-col">
+      {/* Top bar */}
+      <header className="h-10 shrink-0 border-b border-vs-border px-3 flex items-center justify-between text-sm">
+        <div className="flex items-center gap-3">
+          <Link to="/" className="text-vs-mute hover:text-vs-text">← Back</Link>
+          <span className="font-medium truncate max-w-md">{assignment.project.title}</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className={`text-vs-mute ${remaining === 'Time up' ? 'text-red-400' : ''}`}>
+            Time left: <span className="text-vs-text">{remaining}</span>
+          </span>
+          <button className="btn" onClick={submit} disabled={submitting || remaining === 'Time up'}>
+            {submitting ? 'Submitting…' : 'Submit'}
+          </button>
+        </div>
+      </header>
+
+      {/* Last-minute warning */}
+      {warnLast60 && !autoSubmitted && remaining !== 'Time up' && (
+        <div className="shrink-0 px-4 py-2 text-sm bg-amber-900/30 border-b border-amber-700 text-amber-200 flex items-center justify-between">
+          <span>⏰ Less than a minute left — your work will auto-submit at the deadline.</span>
+          <button className="btn-ghost" onClick={() => setWarnLast60(false)}>Dismiss</button>
+        </div>
+      )}
+
+      {/* Auto-submit banner */}
+      {autoSubmitted && (
+        <div className={`shrink-0 px-4 py-2 text-sm flex items-center justify-between
+          ${autoSubmitted === 'ok'
+            ? 'bg-emerald-900/30 border-b border-emerald-700 text-emerald-200'
+            : 'bg-red-900/30 border-b border-red-700 text-red-200'}`}>
+          <span>
+            {autoSubmitted === 'ok'
+              ? '⏱ Time\'s up — your work was auto-submitted.'
+              : '⏱ Time\'s up — auto-submit failed (window closed). Your draft is saved locally.'}
+          </span>
+          <button className="btn-ghost" onClick={() => nav('/')}>Back to home</button>
+        </div>
+      )}
+
+      <div className="flex-1 flex min-h-0">
+        {/* Sidebar: problem + assets + files */}
+        <aside className="w-80 shrink-0 border-r border-vs-border bg-vs-sidebar flex flex-col min-h-0">
+          <div className="border-b border-vs-border">
+            <button
+              onClick={() => setProblemCollapsed(c => !c)}
+              className="w-full flex items-center justify-between px-3 py-2 hover:bg-vs-panel transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-vs-mute text-xs">{problemCollapsed ? '▸' : '▾'}</span>
+                <span className="text-xs uppercase tracking-wide text-vs-mute">Problem</span>
+              </div>
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); setProblemOpen(true) }}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setProblemOpen(true) } }}
+                className="text-[11px] text-vs-accent hover:underline cursor-pointer"
+              >⤢ Expand</span>
+            </button>
+            {!problemCollapsed && (
+              <div className="px-3 pb-3 max-h-72 overflow-auto">
+                {assignment.project.description
+                  ? <Markdown source={assignment.project.description} />
+                  : <div className="text-xs text-vs-mute">—</div>}
+                {assignment.project.description && assignment.project.description.length > 400 && (
+                  <button
+                    className="mt-2 text-xs text-vs-accent hover:underline"
+                    onClick={() => setProblemOpen(true)}
+                  >Read full problem →</button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="p-3 border-b border-vs-border">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-xs uppercase tracking-wide text-vs-mute">Files</div>
+              <div className="flex gap-2">
+                <button className="text-xs text-vs-accent hover:underline" onClick={() => addFile()}>+ file</button>
+                <button className="text-xs text-vs-accent hover:underline" onClick={addFolder}>+ folder</button>
+              </div>
+            </div>
+            <ul className="space-y-0.5 text-sm">
+              {tree.map(([dir, items]) => (
+                <li key={dir || '__root__'}>
+                  {dir !== '' && (
+                    <div className="group flex items-center justify-between text-vs-mute text-xs mt-2 mb-0.5">
+                      <div className="truncate">📁 {dir}</div>
+                      <div className="opacity-0 group-hover:opacity-100 flex gap-1">
+                        <button className="hover:text-vs-text" onClick={() => addFile(dir)} title="New file in folder">+</button>
+                        <button className="hover:text-red-400" onClick={() => removeFolder(dir)} title="Delete folder">×</button>
+                      </div>
+                    </div>
+                  )}
+                  <ul className={dir === '' ? '' : 'pl-3'}>
+                    {items.map(n => {
+                      const label = dir === '' ? n : n.slice(dir.length + 1)
+                      return (
+                        <li key={n} className="flex items-center justify-between group">
+                          <button
+                            className={`text-left px-2 py-1 rounded flex-1 truncate ${active === n ? 'bg-vs-panel text-vs-text' : 'text-vs-text/80 hover:bg-vs-panel'}`}
+                            onClick={() => setActive(n)}
+                            title={n}
+                          >
+                            {label}
+                          </button>
+                          <button onClick={() => removeFile(n)} className="opacity-0 group-hover:opacity-100 text-xs text-vs-mute hover:text-red-400 px-1">×</button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="p-3 overflow-auto flex-1 min-h-0">
+            <div className="text-xs uppercase tracking-wide text-vs-mute mb-2">Assets</div>
+            {assets.length === 0 ? (
+              <div className="text-xs text-vs-mute">No assets provided.</div>
+            ) : (
+              <ul className="space-y-0.5 font-mono text-xs">
+                {(() => {
+                  const groups = new Map<string, ProjectAsset[]>()
+                  for (const a of assets) {
+                    const i = a.name.indexOf('/')
+                    const k = i === -1 ? '/' : a.name.slice(0, i)
+                    if (!groups.has(k)) groups.set(k, [])
+                    groups.get(k)!.push(a)
+                  }
+                  return Array.from(groups.entries())
+                    .sort((x, y) => (x[0] === '/' ? 1 : y[0] === '/' ? -1 : x[0].localeCompare(y[0])))
+                    .map(([key, items]) => (
+                      <li key={key}>
+                        <div className="text-vs-mute mt-2 mb-0.5">{key === '/' ? '(root)' : `📁 ${key}`}</div>
+                        <ul className="pl-3 space-y-0.5">
+                          {items.map(a => {
+                            const label = key === '/' ? a.name : a.name.slice(key.length + 1)
+                            return (
+                              <li key={a.id} className="flex items-center gap-2 group">
+                                <button
+                                  className="truncate text-left flex-1 hover:text-vs-text text-vs-text/80"
+                                  title={`Click to copy: ${a.name}`}
+                                  onClick={() => navigator.clipboard.writeText(a.name)}
+                                >{label}</button>
+                                <a href={a.public_url} target="_blank" rel="noreferrer"
+                                  className="opacity-0 group-hover:opacity-100 text-vs-accent">↗</a>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </li>
+                    ))
+                })()}
+              </ul>
+            )}
+            <div className="text-[11px] text-vs-mute mt-3 leading-relaxed">
+              Click a file to copy its path. Reference it like <code className="text-vs-text">&lt;img src="images/logo.png"&gt;</code>.
+            </div>
+          </div>
+        </aside>
+
+        {/* Editor */}
+        <section className="flex-1 flex flex-col min-w-0">
+          <div className="h-8 border-b border-vs-border bg-vs-sidebar flex items-center text-xs overflow-x-auto">
+            {fileNames.map(n => {
+              const base = n.includes('/') ? n.slice(n.lastIndexOf('/') + 1) : n
+              return (
+                <button
+                  key={n}
+                  className={`px-3 h-full border-r border-vs-border whitespace-nowrap ${active === n ? 'bg-vs-bg text-vs-text' : 'text-vs-mute hover:text-vs-text'}`}
+                  onClick={() => setActive(n)}
+                  title={n}
+                >
+                  {base}
+                </button>
+              )
+            })}
+          </div>
+          <div className="flex-1 min-h-0">
+            <CodeEditor file={active} value={files[active] ?? ''} onChange={v => updateFile(active, v)} />
+          </div>
+        </section>
+
+        {/* Preview */}
+        <section className="w-[42%] border-l border-vs-border flex flex-col min-w-0">
+          <div className="h-8 border-b border-vs-border bg-vs-sidebar flex items-center px-3 text-xs text-vs-mute">
+            Preview
+          </div>
+          <div className="flex-1 min-h-0">
+            <Preview files={files} assets={assets} />
+          </div>
+        </section>
+      </div>
+
+      {/* Problem reader modal */}
+      {problemOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-6"
+          onClick={() => setProblemOpen(false)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-3xl max-h-[85vh] bg-vs-sidebar border border-vs-border rounded-lg shadow-2xl flex flex-col"
+          >
+            <header className="flex items-center justify-between px-6 py-3 border-b border-vs-border">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-vs-mute">Problem statement</div>
+                <h2 className="font-semibold text-vs-text">{assignment.project.title}</h2>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-vs-mute">Esc to close</span>
+                <button
+                  className="btn-ghost"
+                  onClick={() => setProblemOpen(false)}
+                >Close ✕</button>
+              </div>
+            </header>
+            <div className="overflow-auto px-8 py-6">
+              {assignment.project.description
+                ? <Markdown source={assignment.project.description} className="prose-md-lg" />
+                : <div className="text-vs-mute">No description provided.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
