@@ -9,17 +9,28 @@ type Row = Assignment & { project: Pick<Project, 'title' | 'description'> }
 export default function Home() {
   const { profile, signOut } = useAuth()
   const [rows, setRows] = useState<Row[]>([])
+  const [submittedAt, setSubmittedAt] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    supabase
-      .from('assignments')
-      .select('*, project:projects(title, description)')
-      .order('starts_at', { ascending: true })
-      .then(({ data }) => {
-        setRows((data as unknown as Row[]) || [])
-        setLoading(false)
-      })
+    (async () => {
+      const [{ data: a }, { data: s }] = await Promise.all([
+        supabase
+          .from('assignments')
+          .select('*, project:projects(title, description)')
+          .order('starts_at', { ascending: true }),
+        supabase
+          .from('submissions')
+          .select('assignment_id, submitted_at'),
+      ])
+      setRows((a as unknown as Row[]) || [])
+      const map: Record<string, string> = {}
+      for (const row of (s as { assignment_id: string; submitted_at: string }[] | null) || []) {
+        map[row.assignment_id] = row.submitted_at
+      }
+      setSubmittedAt(map)
+      setLoading(false)
+    })()
   }, [])
 
   const now = Date.now()
@@ -46,6 +57,7 @@ export default function Home() {
               const open = now >= start && now <= end
               const upcoming = now < start
               const closed = now > end
+              const submitted = submittedAt[r.id]
               return (
                 <li key={r.id} className="card">
                   <div className="flex items-start justify-between gap-4">
@@ -54,11 +66,20 @@ export default function Home() {
                       <div className="text-xs text-vs-mute mt-1">
                         {new Date(r.starts_at).toLocaleString()} → {new Date(r.ends_at).toLocaleString()}
                       </div>
+                      {submitted && (
+                        <div className="text-xs text-emerald-400 mt-1">
+                          ✓ Submitted on {new Date(submitted).toLocaleString()}
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      {open && <Link className="btn" to={`/solve/${r.id}`}>Open</Link>}
-                      {upcoming && <span className="text-xs text-vs-mute">Not yet open</span>}
-                      {closed && <span className="text-xs text-red-400">Closed</span>}
+                    <div className="shrink-0">
+                      {submitted
+                        ? <span className="inline-block px-3 py-1.5 rounded border border-emerald-700 bg-emerald-900/30 text-emerald-300 text-sm">Submitted</span>
+                        : open
+                          ? <Link className="btn" to={`/solve/${r.id}`}>Open</Link>
+                          : upcoming
+                            ? <span className="text-xs text-vs-mute">Not yet open</span>
+                            : <span className="text-xs text-red-400">Closed</span>}
                     </div>
                   </div>
                 </li>

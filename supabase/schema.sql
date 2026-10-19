@@ -56,6 +56,8 @@ create table if not exists public.submissions (
   submitted_at timestamptz default now()
 );
 create index if not exists submissions_assignment_idx on public.submissions (assignment_id);
+-- One submission per student per assignment
+create unique index if not exists submissions_one_per_student on public.submissions (assignment_id, student_id);
 
 -- ---------- Helpers --------------------------------------------------
 

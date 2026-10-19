@@ -31,6 +31,7 @@ export default function Solve() {
   const [err, setErr] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [remaining, setRemaining] = useState<string>('')
+  const [alreadySubmittedAt, setAlreadySubmittedAt] = useState<string | null>(null)
   const [problemOpen, setProblemOpen] = useState(false)   // fullscreen reader
   const [problemCollapsed, setProblemCollapsed] = useState(false)
   const [autoSubmitted, setAutoSubmitted] = useState<null | 'ok' | 'fail'>(null)
@@ -70,6 +71,18 @@ export default function Solve() {
       if (!data) { setErr('Assignment not found or not visible'); setLoading(false); return }
       const row = data as unknown as AssignmentRow
       setAssignment(row)
+
+      // Block if the student has already submitted this assignment.
+      const { data: existing } = await supabase
+        .from('submissions')
+        .select('submitted_at')
+        .eq('assignment_id', row.id)
+        .maybeSingle()
+      if (existing) {
+        setAlreadySubmittedAt((existing as { submitted_at: string }).submitted_at)
+        setLoading(false)
+        return
+      }
 
       const { data: a } = await supabase
         .from('project_assets')
@@ -294,6 +307,23 @@ export default function Solve() {
   if (loading) return <div className="p-6 text-vs-mute">Loading…</div>
   if (err) return <div className="p-6 text-red-400">{err}</div>
   if (!assignment) return null
+
+  if (alreadySubmittedAt) {
+    return (
+      <div className="min-h-screen grid place-items-center p-6">
+        <div className="card max-w-md text-center space-y-4">
+          <div className="text-4xl">✓</div>
+          <h1 className="text-lg font-semibold">Already submitted</h1>
+          <p className="text-sm text-vs-mute">
+            You submitted <span className="text-vs-text">{assignment.project.title}</span> on{' '}
+            <span className="text-vs-text">{new Date(alreadySubmittedAt).toLocaleString()}</span>.
+            Only one submission per assignment is allowed.
+          </p>
+          <Link to="/" className="btn inline-block">Back to home</Link>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="h-screen flex flex-col">
