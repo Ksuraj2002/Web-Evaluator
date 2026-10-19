@@ -34,6 +34,7 @@ export default function Solve() {
   const [problemOpen, setProblemOpen] = useState(false)   // fullscreen reader
   const [problemCollapsed, setProblemCollapsed] = useState(false)
   const [autoSubmitted, setAutoSubmitted] = useState<null | 'ok' | 'fail'>(null)
+  const [autoSubmitError, setAutoSubmitError] = useState<string | null>(null)
 
   // Keep latest files/profile for the auto-submit timer without re-arming it.
   const filesRef = useRef(files)
@@ -95,11 +96,14 @@ export default function Solve() {
   useEffect(() => {
     if (!assignment || !profile) return
     const end = new Date(assignment.ends_at).getTime()
+    // Only auto-submit if the page was opened BEFORE the deadline.
+    // Reopening a closed assignment shouldn't trigger a (doomed) insert.
+    const openedBeforeDeadline = Date.now() < end
     const tick = () => {
       const ms = end - Date.now()
       if (ms <= 0) {
         setRemaining('Time up')
-        if (!didSubmitRef.current) {
+        if (openedBeforeDeadline && !didSubmitRef.current) {
           didSubmitRef.current = true
           void autoSubmit()
         }
@@ -125,12 +129,21 @@ export default function Solve() {
 
   async function autoSubmit() {
     if (!assignment || !profile) return
+    // eslint-disable-next-line no-console
+    console.log('[auto-submit] firing at', new Date().toISOString(), {
+      assignment_id: assignment.id,
+      student_id: profile.id,
+      ends_at: assignment.ends_at,
+      file_count: Object.keys(filesRef.current).length,
+    })
     const { error } = await supabase
       .from('submissions')
       .insert({ assignment_id: assignment.id, student_id: profile.id, files: filesRef.current })
     if (error) {
+      // eslint-disable-next-line no-console
+      console.error('[auto-submit] failed:', error)
       setAutoSubmitted('fail')
-      // Last-ditch backup: dump the draft so the student can recover it.
+      setAutoSubmitError(`${error.code ? `[${error.code}] ` : ''}${error.message}${error.hint ? ` — ${error.hint}` : ''}`)
       try {
         localStorage.setItem(
           `web-eval:expired:${assignment.id}`,
@@ -138,6 +151,8 @@ export default function Solve() {
         )
       } catch {}
     } else {
+      // eslint-disable-next-line no-console
+      console.log('[auto-submit] success')
       setAutoSubmitted('ok')
       try { localStorage.removeItem(draftKey(assignment.id)) } catch {}
     }
@@ -246,6 +261,14 @@ export default function Solve() {
         </div>
       </header>
 
+      {/* Already-closed banner (opened a stale link after deadline) */}
+      {remaining === 'Time up' && !autoSubmitted && new Date(assignment.ends_at).getTime() < Date.now() - 31_000 && (
+        <div className="shrink-0 px-4 py-2 text-sm bg-vs-panel border-b border-vs-border text-vs-mute flex items-center justify-between">
+          <span>⏱ This assignment closed on {new Date(assignment.ends_at).toLocaleString()}. You can view your draft but can no longer submit.</span>
+          <button className="btn-ghost" onClick={() => nav('/')}>Back to home</button>
+        </div>
+      )}
+
       {/* Last-minute warning */}
       {warnLast60 && !autoSubmitted && remaining !== 'Time up' && (
         <div className="shrink-0 px-4 py-2 text-sm bg-amber-900/30 border-b border-amber-700 text-amber-200 flex items-center justify-between">
@@ -256,16 +279,25 @@ export default function Solve() {
 
       {/* Auto-submit banner */}
       {autoSubmitted && (
-        <div className={`shrink-0 px-4 py-2 text-sm flex items-center justify-between
+        <div className={`shrink-0 px-4 py-2 text-sm flex items-start justify-between gap-4
           ${autoSubmitted === 'ok'
             ? 'bg-emerald-900/30 border-b border-emerald-700 text-emerald-200'
             : 'bg-red-900/30 border-b border-red-700 text-red-200'}`}>
-          <span>
-            {autoSubmitted === 'ok'
-              ? '⏱ Time\'s up — your work was auto-submitted.'
-              : '⏱ Time\'s up — auto-submit failed (window closed). Your draft is saved locally.'}
-          </span>
-          <button className="btn-ghost" onClick={() => nav('/')}>Back to home</button>
+          <div className="flex-1 min-w-0">
+            {autoSubmitted === 'ok' ? (
+              <span>⏱ Time's up — your work was auto-submitted.</span>
+            ) : (
+              <>
+                <div>⏱ Time's up — auto-submit failed. Your draft is saved locally.</div>
+                {autoSubmitError && (
+                  <div className="mt-1 text-xs font-mono text-red-300/90 break-all">
+                    Server said: {autoSubmitError}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <button className="btn-ghost shrink-0" onClick={() => nav('/')}>Back to home</button>
         </div>
       )}
 
