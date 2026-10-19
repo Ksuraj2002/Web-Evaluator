@@ -4,6 +4,10 @@ export interface Profile {
   id: string
   email: string
   role: Role
+  full_name?: string | null
+  campus?: string | null
+  semester?: string | null
+  batch?: string | null
 }
 
 export type FileMap = Record<string, string>

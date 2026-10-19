@@ -3,26 +3,42 @@ import { Navigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 
+type Mode = 'signin' | 'signup' | 'forgot'
+
 export default function Login() {
   const { session, loading } = useAuth()
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [mode, setMode] = useState<Mode>('signin')
+
+  // Shared
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  // Signup extras
+  const [fullName, setFullName] = useState('')
+  const [campus, setCampus] = useState('')
+  const [semester, setSemester] = useState('')
+  const [batch, setBatch] = useState('')
+
   const [err, setErr] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [sentTo, setSentTo] = useState<string | null>(null)   // email we sent a verification to
+  const [sentTo, setSentTo] = useState<string | null>(null)
   const [resending, setResending] = useState(false)
 
   if (!loading && session) return <Navigate to="/" replace />
 
-  // "Check your email" screen after signup when confirmation is required
+  function switchMode(next: Mode) {
+    setMode(next); setErr(null); setInfo(null); setSentTo(null)
+  }
+
+  // ---------- Post-signup "check your email" screen ----------
   if (sentTo) {
     async function resend() {
       setResending(true); setErr(null)
       const { error } = await supabase.auth.resend({ type: 'signup', email: sentTo! })
       setResending(false)
       if (error) setErr(error.message)
-      else setErr('Verification email resent.')
+      else setInfo('Verification email resent.')
     }
     return (
       <div className="min-h-screen grid place-items-center p-6">
@@ -30,8 +46,8 @@ export default function Login() {
           <div className="text-4xl">📬</div>
           <h1 className="text-lg font-semibold">Check your email</h1>
           <p className="text-sm text-vs-mute">
-            We sent a verification link to <span className="text-vs-text font-mono">{sentTo}</span>.
-            Click it to activate your account, then come back and sign in.
+            We sent a {mode === 'forgot' ? 'password reset' : 'verification'} link to{' '}
+            <span className="text-vs-text font-mono">{sentTo}</span>.
           </p>
           <p className="text-xs text-vs-mute">
             Didn't get it? Check your spam folder, or
@@ -40,12 +56,11 @@ export default function Login() {
               {resending ? 'resending…' : 'resend the email'}
             </button>.
           </p>
+          {info && <div className="text-xs text-emerald-300">{info}</div>}
           {err && <div className="text-xs text-amber-300">{err}</div>}
-          <button
-            type="button"
-            onClick={() => { setSentTo(null); setMode('signin'); setErr(null) }}
-            className="btn-ghost w-full"
-          >Back to sign in</button>
+          <button type="button" onClick={() => switchMode('signin')} className="btn-ghost w-full">
+            Back to sign in
+          </button>
         </div>
       </div>
     )
@@ -53,44 +68,141 @@ export default function Login() {
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    setErr(null); setBusy(true)
+    setErr(null); setInfo(null); setBusy(true)
+
     if (mode === 'signin') {
       const { error } = await supabase.auth.signInWithPassword({ email, password })
       setBusy(false)
       if (error) setErr(error.message)
       return
     }
+
+    if (mode === 'forgot') {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      })
+      setBusy(false)
+      if (error) setErr(error.message)
+      else setSentTo(email)
+      return
+    }
+
+    // signup
+    if (password !== confirmPassword) {
+      setBusy(false); setErr('Passwords do not match'); return
+    }
+    if (!fullName.trim()) {
+      setBusy(false); setErr('Please enter your name'); return
+    }
+
     const { data, error } = await supabase.auth.signUp({
       email, password,
-      options: { emailRedirectTo: `${window.location.origin}/` },
+      options: {
+        emailRedirectTo: `${window.location.origin}/`,
+        data: {
+          full_name: fullName.trim(),
+          campus: campus.trim(),
+          semester: semester.trim(),
+          batch: batch.trim(),
+        },
+      },
     })
     setBusy(false)
     if (error) { setErr(error.message); return }
-    // If "Confirm email" is ON in Supabase, signUp returns a user but no session.
-    // If OFF, we get a session and AuthProvider will redirect automatically.
-    if (!data.session) setSentTo(email)
+    if (!data.session) setSentTo(email)   // Email confirmation ON
   }
 
   return (
     <div className="min-h-screen grid place-items-center p-6">
-      <form onSubmit={submit} className="card w-full max-w-sm space-y-4">
-        <h1 className="text-lg font-semibold">Web Eval — {mode === 'signin' ? 'Sign in' : 'Sign up'}</h1>
+      <form onSubmit={submit} className="card w-full max-w-md space-y-3">
+        <h1 className="text-lg font-semibold">
+          Web Eval — {mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Reset password'}
+        </h1>
+
+        {mode === 'signup' && (
+          <>
+            <div>
+              <label className="label">Full name</label>
+              <input className="input" value={fullName} onChange={e => setFullName(e.target.value)} required />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="label">Campus</label>
+                <input className="input" value={campus} onChange={e => setCampus(e.target.value)} placeholder="e.g. MSOT, Pune" />
+              </div>
+              <div>
+                <label className="label">Batch</label>
+                <input className="input" value={batch} onChange={e => setBatch(e.target.value)} placeholder="e.g. 2024-2028" />
+              </div>
+            </div>
+            <div>
+              <label className="label">Semester</label>
+              <select className="input" value={semester} onChange={e => setSemester(e.target.value)}>
+                <option value="">— choose —</option>
+                {['1','2','3','4','5','6','7','8'].map(s => <option key={s} value={s}>Semester {s}</option>)}
+              </select>
+            </div>
+          </>
+        )}
+
         <div>
           <label className="label">Email</label>
-          <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+          <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" />
         </div>
-        <div>
-          <label className="label">Password</label>
-          <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
-        </div>
+
+        {mode !== 'forgot' && (
+          <div>
+            <label className="label">Password</label>
+            <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)}
+              required minLength={6}
+              autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} />
+          </div>
+        )}
+
+        {mode === 'signup' && (
+          <div>
+            <label className="label">Confirm password</label>
+            <input className="input" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+              required minLength={6} autoComplete="new-password" />
+            {password && confirmPassword && password !== confirmPassword && (
+              <div className="text-[11px] text-red-400 mt-1">Passwords don't match</div>
+            )}
+          </div>
+        )}
+
         {err && <div className="text-red-400 text-sm">{err}</div>}
+        {info && <div className="text-emerald-300 text-sm">{info}</div>}
+
         <button className="btn w-full" disabled={busy}>
-          {busy ? (mode === 'signin' ? 'Signing in…' : 'Creating account…')
-                : (mode === 'signin' ? 'Sign in' : 'Create account')}
+          {busy ? '…' :
+            mode === 'signin' ? 'Sign in' :
+            mode === 'signup' ? 'Create account' :
+            'Send reset link'}
         </button>
-        <button type="button" className="text-xs text-vs-mute hover:text-vs-text" onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setErr(null) }}>
-          {mode === 'signin' ? "No account? Sign up" : 'Have an account? Sign in'}
-        </button>
+
+        {/* Mode toggles */}
+        <div className="flex items-center justify-between pt-1 text-xs">
+          {mode === 'signin' && (
+            <>
+              <button type="button" onClick={() => switchMode('signup')} className="text-vs-mute hover:text-vs-text">
+                No account? <span className="text-vs-accent">Sign up</span>
+              </button>
+              <button type="button" onClick={() => switchMode('forgot')} className="text-vs-accent hover:underline">
+                Forgot password?
+              </button>
+            </>
+          )}
+          {mode === 'signup' && (
+            <button type="button" onClick={() => switchMode('signin')} className="text-vs-mute hover:text-vs-text">
+              Have an account? <span className="text-vs-accent">Sign in</span>
+            </button>
+          )}
+          {mode === 'forgot' && (
+            <button type="button" onClick={() => switchMode('signin')} className="text-vs-mute hover:text-vs-text">
+              ← Back to sign in
+            </button>
+          )}
+        </div>
       </form>
     </div>
   )

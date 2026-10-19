@@ -9,8 +9,17 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text unique not null,
   role text not null default 'student' check (role in ('student','admin')),
+  full_name text,
+  campus text,
+  semester text,
+  batch text,
   created_at timestamptz default now()
 );
+-- Add columns if an older schema is already in place
+alter table public.profiles add column if not exists full_name text;
+alter table public.profiles add column if not exists campus text;
+alter table public.profiles add column if not exists semester text;
+alter table public.profiles add column if not exists batch text;
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
@@ -73,12 +82,20 @@ language sql stable security definer set search_path = public as $$
   select lower(email) from public.profiles where id = auth.uid();
 $$;
 
--- Auto-create profile row on signup
+-- Auto-create profile row on signup, pulling the extra fields the client
+-- supplied via supabase.auth.signUp({ options: { data: {...} } }).
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.profiles (id, email)
-  values (new.id, lower(new.email))
+  insert into public.profiles (id, email, full_name, campus, semester, batch)
+  values (
+    new.id,
+    lower(new.email),
+    nullif(new.raw_user_meta_data->>'full_name', ''),
+    nullif(new.raw_user_meta_data->>'campus', ''),
+    nullif(new.raw_user_meta_data->>'semester', ''),
+    nullif(new.raw_user_meta_data->>'batch', '')
+  )
   on conflict (id) do nothing;
   return new;
 end; $$;
@@ -98,9 +115,13 @@ alter table public.submissions      enable row level security;
 
 -- profiles
 drop policy if exists profiles_self_read   on public.profiles;
+drop policy if exists profiles_self_update on public.profiles;
 drop policy if exists profiles_admin_read  on public.profiles;
 drop policy if exists profiles_admin_write on public.profiles;
 create policy profiles_self_read   on public.profiles for select using (id = auth.uid());
+create policy profiles_self_update on public.profiles for update
+  using (id = auth.uid())
+  with check (id = auth.uid() and role = (select role from public.profiles where id = auth.uid()));
 create policy profiles_admin_read  on public.profiles for select using (public.is_admin());
 create policy profiles_admin_write on public.profiles for update using (public.is_admin()) with check (public.is_admin());
 
