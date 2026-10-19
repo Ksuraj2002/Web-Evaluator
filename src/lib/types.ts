@@ -1,13 +1,16 @@
 export type Role = 'student' | 'admin'
 
+export type Campus = 'Hi-Tech' | 'RGIB' | 'JU'
+export const CAMPUSES: Campus[] = ['Hi-Tech', 'RGIB', 'JU']
+
 export interface Profile {
   id: string
   email: string
   role: Role
   full_name?: string | null
-  campus?: string | null
+  campus?: Campus | null
   semester?: string | null
-  batch?: string | null
+  section?: string | null
 }
 
 export type FileMap = Record<string, string>

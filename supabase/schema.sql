@@ -10,16 +10,16 @@ create table if not exists public.profiles (
   email text unique not null,
   role text not null default 'student' check (role in ('student','admin')),
   full_name text,
-  campus text,
+  campus text check (campus in ('Hi-Tech', 'RGIB', 'JU')),
   semester text,
-  batch text,
+  section text,
   created_at timestamptz default now()
 );
 -- Add columns if an older schema is already in place
 alter table public.profiles add column if not exists full_name text;
 alter table public.profiles add column if not exists campus text;
 alter table public.profiles add column if not exists semester text;
-alter table public.profiles add column if not exists batch text;
+alter table public.profiles add column if not exists section text;
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
@@ -87,14 +87,14 @@ $$;
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.profiles (id, email, full_name, campus, semester, batch)
+  insert into public.profiles (id, email, full_name, campus, semester, section)
   values (
     new.id,
     lower(new.email),
     nullif(new.raw_user_meta_data->>'full_name', ''),
     nullif(new.raw_user_meta_data->>'campus', ''),
     nullif(new.raw_user_meta_data->>'semester', ''),
-    nullif(new.raw_user_meta_data->>'batch', '')
+    nullif(new.raw_user_meta_data->>'section', '')
   )
   on conflict (id) do nothing;
   return new;

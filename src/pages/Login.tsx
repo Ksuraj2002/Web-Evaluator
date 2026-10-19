@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { CAMPUSES } from '../lib/types'
 
 type Mode = 'signin' | 'signup' | 'forgot'
 
@@ -17,7 +18,7 @@ export default function Login() {
   const [fullName, setFullName] = useState('')
   const [campus, setCampus] = useState('')
   const [semester, setSemester] = useState('')
-  const [batch, setBatch] = useState('')
+  const [section, setSection] = useState('')
 
   const [err, setErr] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
@@ -103,7 +104,7 @@ export default function Login() {
           full_name: fullName.trim(),
           campus: campus.trim(),
           semester: semester.trim(),
-          batch: batch.trim(),
+          section: section.trim(),
         },
       },
     })
@@ -128,11 +129,14 @@ export default function Login() {
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="label">Campus</label>
-                <input className="input" value={campus} onChange={e => setCampus(e.target.value)} placeholder="e.g. MSOT, Pune" />
+                <select className="input" value={campus} onChange={e => setCampus(e.target.value)} required>
+                  <option value="">— choose —</option>
+                  {CAMPUSES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
               <div>
-                <label className="label">Batch</label>
-                <input className="input" value={batch} onChange={e => setBatch(e.target.value)} placeholder="e.g. 2024-2028" />
+                <label className="label">Section</label>
+                <input className="input" value={section} onChange={e => setSection(e.target.value)} placeholder="e.g. A" />
               </div>
             </div>
             <div>
