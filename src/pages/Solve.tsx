@@ -36,6 +36,20 @@ export default function Solve() {
   const [autoSubmitted, setAutoSubmitted] = useState<null | 'ok' | 'fail'>(null)
   const [autoSubmitError, setAutoSubmitError] = useState<string | null>(null)
 
+  // Panel layout (persisted in localStorage so it survives reloads)
+  const LAYOUT_KEY = 'web-eval:layout'
+  const initialLayout = (() => {
+    try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}') } catch { return {} }
+  })()
+  const [sidebarW, setSidebarW] = useState<number>(initialLayout.sidebarW ?? 320)
+  const [previewW, setPreviewW] = useState<number>(initialLayout.previewW ?? 560)
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(initialLayout.sidebarOpen ?? true)
+  const [previewOpen, setPreviewOpen] = useState<boolean>(initialLayout.previewOpen ?? true)
+  const [previewFull, setPreviewFull] = useState<boolean>(false)
+  useEffect(() => {
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sidebarW, previewW, sidebarOpen, previewOpen })) } catch {}
+  }, [sidebarW, previewW, sidebarOpen, previewOpen])
+
   // Keep latest files/profile for the auto-submit timer without re-arming it.
   const filesRef = useRef(files)
   useEffect(() => { filesRef.current = files }, [files])
@@ -84,13 +98,17 @@ export default function Solve() {
     localStorage.setItem(draftKey(assignmentId), JSON.stringify({ files, folders }))
   }, [files, folders, assignmentId, loading])
 
-  // Esc closes the problem modal
+  // Esc closes the problem modal or exits preview fullscreen
   useEffect(() => {
-    if (!problemOpen) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setProblemOpen(false) }
+    if (!problemOpen && !previewFull) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (problemOpen) setProblemOpen(false)
+      else if (previewFull) setPreviewFull(false)
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [problemOpen])
+  }, [problemOpen, previewFull])
 
   // Live countdown to ends_at — also fires auto-submit when it hits 0.
   useEffect(() => {
@@ -178,6 +196,40 @@ export default function Solve() {
 
   function cleanPath(p: string) {
     return p.split('/').map(s => s.trim()).filter(Boolean).join('/')
+  }
+
+  // Drag a vertical splitter: pass the setter + which side the value lives on.
+  // "left"  = width of the left panel (handle at its right edge)
+  // "right" = width of the right panel (handle at its left edge)
+  function startDrag(
+    e: React.PointerEvent,
+    side: 'left' | 'right',
+    get: () => number,
+    set: (v: number) => void,
+    min = 180,
+    max = 900,
+  ) {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = get()
+    const id = e.pointerId
+    const target = e.currentTarget as HTMLElement
+    try { target.setPointerCapture(id) } catch {}
+    document.body.style.cursor = 'col-resize'
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX
+      const delta = side === 'left' ? dx : -dx
+      const next = Math.min(max, Math.max(min, startW + delta))
+      set(next)
+    }
+    const onUp = () => {
+      document.body.style.cursor = ''
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      try { target.releasePointerCapture(id) } catch {}
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
   }
 
   function updateFile(name: string, v: string) {
@@ -301,9 +353,13 @@ export default function Solve() {
         </div>
       )}
 
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 relative">
         {/* Sidebar: problem + assets + files */}
-        <aside className="w-80 shrink-0 border-r border-vs-border bg-vs-sidebar flex flex-col min-h-0">
+        {sidebarOpen && !previewFull && (
+        <aside
+          className="shrink-0 border-r border-vs-border bg-vs-sidebar flex flex-col min-h-0"
+          style={{ width: sidebarW }}
+        >
           <div className="border-b border-vs-border">
             <button
               onClick={() => setProblemCollapsed(c => !c)}
@@ -423,10 +479,28 @@ export default function Solve() {
             </div>
           </div>
         </aside>
+        )}
+
+        {/* Sidebar drag handle */}
+        {sidebarOpen && !previewFull && (
+          <div
+            onPointerDown={e => startDrag(e, 'left', () => sidebarW, setSidebarW, 220, 560)}
+            className="w-1 cursor-col-resize bg-transparent hover:bg-vs-accent/60 transition-colors"
+            title="Drag to resize"
+          />
+        )}
 
         {/* Editor */}
+        {!previewFull && (
         <section className="flex-1 flex flex-col min-w-0">
           <div className="h-8 border-b border-vs-border bg-vs-sidebar flex items-center text-xs overflow-x-auto">
+            {!sidebarOpen && (
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="px-2 h-full text-vs-mute hover:text-vs-text border-r border-vs-border"
+                title="Show sidebar"
+              >▸</button>
+            )}
             {fileNames.map(n => {
               const base = n.includes('/') ? n.slice(n.lastIndexOf('/') + 1) : n
               return (
@@ -440,21 +514,74 @@ export default function Solve() {
                 </button>
               )
             })}
+            <div className="ml-auto flex items-center gap-1 pr-2">
+              {sidebarOpen && (
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  className="px-2 h-7 rounded hover:bg-vs-panel text-vs-mute hover:text-vs-text"
+                  title="Hide sidebar"
+                >◀ Sidebar</button>
+              )}
+              {previewOpen ? (
+                <button
+                  onClick={() => setPreviewOpen(false)}
+                  className="px-2 h-7 rounded hover:bg-vs-panel text-vs-mute hover:text-vs-text"
+                  title="Hide preview"
+                >Preview ▶</button>
+              ) : (
+                <button
+                  onClick={() => setPreviewOpen(true)}
+                  className="px-2 h-7 rounded hover:bg-vs-panel text-vs-mute hover:text-vs-text"
+                  title="Show preview"
+                >◀ Preview</button>
+              )}
+            </div>
           </div>
           <div className="flex-1 min-h-0">
             <CodeEditor file={active} value={files[active] ?? ''} onChange={v => updateFile(active, v)} />
           </div>
         </section>
+        )}
 
-        {/* Preview */}
-        <section className="w-[42%] border-l border-vs-border flex flex-col min-w-0">
-          <div className="h-8 border-b border-vs-border bg-vs-sidebar flex items-center px-3 text-xs text-vs-mute">
-            Preview
-          </div>
-          <div className="flex-1 min-h-0">
-            <Preview files={files} assets={assets} />
-          </div>
-        </section>
+        {/* Preview drag handle */}
+        {previewOpen && !previewFull && (
+          <div
+            onPointerDown={e => startDrag(e, 'right', () => previewW, setPreviewW, 240, 1200)}
+            className="w-1 cursor-col-resize bg-transparent hover:bg-vs-accent/60 transition-colors"
+            title="Drag to resize"
+          />
+        )}
+
+        {/* Preview panel (normal or fullscreen) */}
+        {previewOpen && (
+          <section
+            className={previewFull
+              ? "fixed inset-0 z-40 bg-white flex flex-col"
+              : "border-l border-vs-border flex flex-col min-w-0 shrink-0"}
+            style={previewFull ? undefined : { width: previewW }}
+          >
+            <div className="h-8 shrink-0 border-b border-vs-border bg-vs-sidebar flex items-center justify-between px-2 text-xs text-vs-mute">
+              <div className="px-2">Preview</div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPreviewFull(f => !f)}
+                  className="px-2 h-7 rounded hover:bg-vs-panel text-vs-mute hover:text-vs-text"
+                  title={previewFull ? 'Exit fullscreen (Esc)' : 'Fullscreen preview'}
+                >{previewFull ? '⤡ Exit' : '⤢ Fullscreen'}</button>
+                {!previewFull && (
+                  <button
+                    onClick={() => setPreviewOpen(false)}
+                    className="px-2 h-7 rounded hover:bg-vs-panel text-vs-mute hover:text-vs-text"
+                    title="Hide preview"
+                  >✕</button>
+                )}
+              </div>
+            </div>
+            <div className="flex-1 min-h-0">
+              <Preview files={files} assets={assets} />
+            </div>
+          </section>
+        )}
       </div>
 
       {/* Problem reader modal */}
