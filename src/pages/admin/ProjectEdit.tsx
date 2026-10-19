@@ -118,7 +118,6 @@ export default function ProjectEdit() {
       // Preserve subdirectory structure when the user picks a whole folder
       // (webkitRelativePath = "chosenDir/sub/img.png"), stripping the top-level
       // chosen dir so the student references "sub/img.png".
-      // @ts-expect-error webkitRelativePath is non-standard but widely supported
       const rel: string = file.webkitRelativePath || ''
       const relTailRaw = rel ? rel.split('/').slice(1).join('/') : file.name
       const relTail = sanitizePath(relTailRaw)
@@ -305,10 +304,8 @@ export default function ProjectEdit() {
               hidden
               onChange={upload}
               disabled={uploading}
-              // @ts-expect-error non-standard but supported in Chromium/WebKit/Firefox
-              webkitdirectory="true"
-              directory="true"
               multiple
+              {...({ webkitdirectory: 'true', directory: 'true' } as Record<string, string>)}
             />
           </label>
         </div>
