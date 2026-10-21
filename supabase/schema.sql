@@ -48,13 +48,25 @@ create table if not exists public.project_assets (
 create table if not exists public.assignments (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade not null,
-  assignee_email text not null,
+  assignee_email text,   -- null when is_public = true
+  is_public boolean not null default false,
   starts_at timestamptz not null,
   ends_at timestamptz not null,
   created_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz default now(),
-  unique (project_id, assignee_email)
+  check (is_public or assignee_email is not null)
 );
+alter table public.assignments add column if not exists is_public boolean not null default false;
+alter table public.assignments alter column assignee_email drop not null;
+-- Replace the old composite unique (null emails break unique constraints) with
+-- two partial unique indexes: one per (project, email) for private, and one
+-- "only one public row per project".
+alter table public.assignments drop constraint if exists assignments_project_id_assignee_email_key;
+create unique index if not exists assignments_project_email_uniq
+  on public.assignments (project_id, lower(assignee_email))
+  where assignee_email is not null;
+create unique index if not exists assignments_project_public_uniq
+  on public.assignments (project_id) where is_public = true;
 create index if not exists assignments_email_idx on public.assignments (lower(assignee_email));
 
 create table if not exists public.submissions (
@@ -133,7 +145,7 @@ create policy projects_assigned_read on public.projects for select using (
   exists (
     select 1 from public.assignments a
     where a.project_id = projects.id
-      and lower(a.assignee_email) = public.current_email()
+      and (a.is_public or lower(a.assignee_email) = public.current_email())
   )
 );
 
@@ -145,7 +157,7 @@ create policy assets_assigned_read on public.project_assets for select using (
   exists (
     select 1 from public.assignments a
     where a.project_id = project_assets.project_id
-      and lower(a.assignee_email) = public.current_email()
+      and (a.is_public or lower(a.assignee_email) = public.current_email())
   )
 );
 
@@ -154,7 +166,7 @@ drop policy if exists assignments_admin_all on public.assignments;
 drop policy if exists assignments_self_read on public.assignments;
 create policy assignments_admin_all on public.assignments for all using (public.is_admin()) with check (public.is_admin());
 create policy assignments_self_read on public.assignments for select using (
-  lower(assignee_email) = public.current_email()
+  is_public or lower(assignee_email) = public.current_email()
 );
 
 -- submissions
@@ -170,7 +182,7 @@ create policy submissions_self_write on public.submissions for insert with check
   and exists (
     select 1 from public.assignments a
     where a.id = submissions.assignment_id
-      and lower(a.assignee_email) = public.current_email()
+      and (a.is_public or lower(a.assignee_email) = public.current_email())
       and now() >= a.starts_at
       and now() <= a.ends_at + interval '30 seconds'
   )

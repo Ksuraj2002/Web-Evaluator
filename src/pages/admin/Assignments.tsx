@@ -38,6 +38,7 @@ export default function Assignments() {
   const [rows, setRows] = useState<Row[]>([])
   const [projectId, setProjectId] = useState('')
   const [emails, setEmails] = useState('')
+  const [isPublic, setIsPublic] = useState(false)
   const [starts, setStarts] = useState(toLocalInput(new Date().toISOString()))
   const [ends, setEnds] = useState(toLocalInput(new Date(Date.now()+2*3600_000).toISOString()))
   const [busy, setBusy] = useState(false)
@@ -56,20 +57,42 @@ export default function Assignments() {
   async function create(e: FormEvent) {
     e.preventDefault()
     if (!projectId) return alert('Pick a project')
-    const list = emails.split(/[\s,;\n]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
-    if (!list.length) return alert('Add at least one email')
     const startsISO = new Date(starts).toISOString()
     const endsISO = new Date(ends).toISOString()
     if (new Date(endsISO) <= new Date(startsISO)) return alert('End must be after start')
     setBusy(true)
-    const payload = list.map(email => ({
-      project_id: projectId, assignee_email: email,
-      starts_at: startsISO, ends_at: endsISO,
-    }))
-    const { error } = await supabase.from('assignments').upsert(payload, { onConflict: 'project_id,assignee_email' })
-    setBusy(false)
-    if (error) return alert(error.message)
-    setEmails('')
+    if (isPublic) {
+      // Delete any existing public row for this project (there can be only one)
+      // and any per-email rows, then insert one public row.
+      await supabase.from('assignments').delete().eq('project_id', projectId).eq('is_public', true)
+      const { error } = await supabase.from('assignments').insert({
+        project_id: projectId,
+        assignee_email: null,
+        is_public: true,
+        starts_at: startsISO,
+        ends_at: endsISO,
+      })
+      setBusy(false)
+      if (error) return alert(error.message)
+    } else {
+      const list = emails.split(/[\s,;\n]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
+      if (!list.length) { setBusy(false); return alert('Add at least one email, or tick "Publish to everyone"') }
+      const payload = list.map(email => ({
+        project_id: projectId, assignee_email: email, is_public: false,
+        starts_at: startsISO, ends_at: endsISO,
+      }))
+      // Per-email conflict → update start/end
+      for (const row of payload) {
+        await supabase.from('assignments').delete()
+          .eq('project_id', row.project_id)
+          .eq('is_public', false)
+          .ilike('assignee_email', row.assignee_email!)
+      }
+      const { error } = await supabase.from('assignments').insert(payload)
+      setBusy(false)
+      if (error) return alert(error.message)
+      setEmails('')
+    }
     load()
   }
 
@@ -92,12 +115,31 @@ export default function Assignments() {
             {projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
           </select>
         </div>
-        <div>
-          <label className="label">Assignee emails</label>
-          <textarea className="input min-h-[100px]" value={emails} onChange={e => setEmails(e.target.value)}
-            placeholder="one@example.com, two@example.com&#10;three@example.com" />
-          <div className="text-[11px] text-vs-mute mt-1">Separate with commas, spaces, or newlines.</div>
+        <div className="border border-vs-border rounded p-3 bg-vs-bg">
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isPublic}
+              onChange={e => setIsPublic(e.target.checked)}
+              className="mt-0.5"
+            />
+            <div className="flex-1">
+              <div className="text-sm text-vs-text">Publish to everyone</div>
+              <div className="text-[11px] text-vs-mute mt-0.5">
+                Every signed-in student sees this assignment during the window. No email list needed.
+              </div>
+            </div>
+          </label>
         </div>
+
+        {!isPublic && (
+          <div>
+            <label className="label">Assignee emails</label>
+            <textarea className="input min-h-[100px]" value={emails} onChange={e => setEmails(e.target.value)}
+              placeholder="one@example.com, two@example.com&#10;three@example.com" />
+            <div className="text-[11px] text-vs-mute mt-1">Separate with commas, spaces, or newlines.</div>
+          </div>
+        )}
         <div className="space-y-3">
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -159,7 +201,12 @@ export default function Assignments() {
           {shown.map(a => (
             <div key={a.id} className="card flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <div className="text-sm"><span className="font-mono">{a.assignee_email}</span> · <span className="text-vs-mute">{a.project.title}</span></div>
+                <div className="text-sm">
+                  {a.is_public
+                    ? <span className="inline-block mr-2 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-emerald-900/40 border border-emerald-700 text-emerald-300">Public</span>
+                    : <span className="font-mono">{a.assignee_email}</span>}
+                  <span className="text-vs-mute">· {a.project.title}</span>
+                </div>
                 <div className="text-xs text-vs-mute">
                   {prettyLocal(a.starts_at)} → {prettyLocal(a.ends_at)}
                   <span className="ml-2 text-vs-text/70">({formatDuration(new Date(a.starts_at), new Date(a.ends_at))})</span>

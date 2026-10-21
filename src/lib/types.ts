@@ -36,7 +36,8 @@ export interface ProjectAsset {
 export interface Assignment {
   id: string
   project_id: string
-  assignee_email: string
+  assignee_email: string | null
+  is_public: boolean
   starts_at: string
   ends_at: string
   created_at: string
