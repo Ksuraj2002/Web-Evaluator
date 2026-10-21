@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
@@ -16,6 +16,18 @@ const DEFAULT_FILES: FileMap = {
 }
 
 function draftKey(id: string) { return `web-eval:draft:${id}` }
+
+type Layout = {
+  sidebarW?: number
+  previewW?: number
+  sidebarOpen?: boolean
+  previewOpen?: boolean
+}
+
+function readLayout(): Layout {
+  try { return JSON.parse(localStorage.getItem('web-eval:layout') || '{}') }
+  catch { return {} }
+}
 
 export default function Solve() {
   const { assignmentId } = useParams()
@@ -39,9 +51,7 @@ export default function Solve() {
 
   // Panel layout (persisted in localStorage so it survives reloads)
   const LAYOUT_KEY = 'web-eval:layout'
-  const initialLayout = (() => {
-    try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}') } catch { return {} }
-  })()
+  const [initialLayout] = useState(readLayout)
   const [sidebarW, setSidebarW] = useState<number>(initialLayout.sidebarW ?? 320)
   const [previewW, setPreviewW] = useState<number>(initialLayout.previewW ?? 560)
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(initialLayout.sidebarOpen ?? true)
@@ -248,6 +258,9 @@ export default function Solve() {
   function updateFile(name: string, v: string) {
     setFiles(f => ({ ...f, [name]: v }))
   }
+  const handleEditorChange = useCallback((v: string) => {
+    updateFile(active, v)
+  }, [active])
   function addFile(preselectedDir = '') {
     const base = preselectedDir ? `${preselectedDir}/` : ''
     const name = prompt(`New file name (e.g. ${base}about.html, ${base}extra.css):`, base)?.trim()
@@ -568,7 +581,7 @@ export default function Solve() {
             </div>
           </div>
           <div className="flex-1 min-h-0">
-            <CodeEditor file={active} value={files[active] ?? ''} onChange={v => updateFile(active, v)} />
+            <CodeEditor file={active} value={files[active] ?? ''} onChange={handleEditorChange} />
           </div>
         </section>
         )}

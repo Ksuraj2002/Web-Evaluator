@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import type { FileMap, ProjectAsset } from '../lib/types'
 
 /**
@@ -7,7 +7,7 @@ import type { FileMap, ProjectAsset } from '../lib/types'
  * - inline references to styles.css / script.js are rewritten to data URLs
  * - asset library files are exposed via <base> + resolved public URLs
  */
-export default function Preview({ files, assets }: { files: FileMap; assets: ProjectAsset[] }) {
+function Preview({ files, assets }: { files: FileMap; assets: ProjectAsset[] }) {
   const ref = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
@@ -76,3 +76,5 @@ export default function Preview({ files, assets }: { files: FileMap; assets: Pro
     />
   )
 }
+
+export default memo(Preview)
