@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
-import { CAMPUSES } from '../lib/types'
+import { CAMPUSES, SECTIONS, SEMESTERS } from '../lib/types'
 
 type Mode = 'signin' | 'signup' | 'forgot'
 
@@ -136,16 +136,24 @@ export default function Login() {
               </div>
               <div>
                 <label className="label">Section</label>
-                <input className="input" value={section} onChange={e => setSection(e.target.value)} placeholder="e.g. A" />
+                <select className="input" value={section} onChange={e => setSection(e.target.value)}>
+                  <option value="">— choose —</option>
+                  {SECTIONS.map(s => <option key={s} value={s}>{s === 'Dummy' ? 'Dummy' : `Section ${s}`}</option>)}
+                </select>
               </div>
             </div>
             <div>
               <label className="label">Semester</label>
               <select className="input" value={semester} onChange={e => setSemester(e.target.value)}>
                 <option value="">— choose —</option>
-                {['1','2','3','4','5','6','7','8'].map(s => <option key={s} value={s}>Semester {s}</option>)}
+                {SEMESTERS.map(s => <option key={s} value={s}>{s === 'Dummy' ? 'Dummy' : `Semester ${s}`}</option>)}
               </select>
             </div>
+            <button
+              type="button"
+              className="text-[11px] text-vs-accent hover:underline"
+              onClick={() => { setCampus('Dummy'); setSection('Dummy'); setSemester('Dummy') }}
+            >Fill all three with Dummy</button>
           </>
         )}
 

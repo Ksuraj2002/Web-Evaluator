@@ -1,7 +1,10 @@
 export type Role = 'student' | 'admin'
 
-export type Campus = 'Hi-Tech' | 'RGIB' | 'JU'
-export const CAMPUSES: Campus[] = ['Hi-Tech', 'RGIB', 'JU']
+export type Campus = 'Hi-Tech' | 'RGIB' | 'JU' | 'Dummy'
+export const CAMPUSES: Campus[] = ['Hi-Tech', 'RGIB', 'JU', 'Dummy']
+
+export const SECTIONS = ['A', 'B', 'C', 'D', 'Dummy'] as const
+export const SEMESTERS = ['1', '2', '3', '4', '5', '6', '7', '8', 'Dummy'] as const
 
 export interface Profile {
   id: string
