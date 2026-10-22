@@ -22,6 +22,7 @@ preview before submitting. Backend is Supabase (Auth + Postgres + Storage).
 cp .env.example .env     # paste your URL + anon key
 npm install
 npm run dev              # http://localhost:5173
+npm test                 # run the test suite
 ```
 
 ## 3. Promote yourself to admin

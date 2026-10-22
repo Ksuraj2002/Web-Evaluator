@@ -1,16 +1,18 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
 import { supabaseConfigured } from './lib/supabase'
-import Login from './pages/Login'
-import ResetPassword from './pages/ResetPassword'
-import Home from './pages/Home'
-import Solve from './pages/Solve'
-import AdminLayout from './pages/admin/AdminLayout'
-import Projects from './pages/admin/Projects'
-import ProjectEdit from './pages/admin/ProjectEdit'
-import Assignments from './pages/admin/Assignments'
-import Submissions from './pages/admin/Submissions'
-import SubmissionView from './pages/admin/SubmissionView'
+
+const Login = lazy(() => import('./pages/Login'))
+const ResetPassword = lazy(() => import('./pages/ResetPassword'))
+const Home = lazy(() => import('./pages/Home'))
+const Solve = lazy(() => import('./pages/Solve'))
+const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'))
+const Projects = lazy(() => import('./pages/admin/Projects'))
+const ProjectEdit = lazy(() => import('./pages/admin/ProjectEdit'))
+const Assignments = lazy(() => import('./pages/admin/Assignments'))
+const Submissions = lazy(() => import('./pages/admin/Submissions'))
+const SubmissionView = lazy(() => import('./pages/admin/SubmissionView'))
 
 function Protected({ children, admin }: { children: JSX.Element; admin?: boolean }) {
   const { session, profile, loading } = useAuth()
@@ -43,21 +45,23 @@ export default function App() {
   if (!supabaseConfigured) return <SetupScreen />
   return (
     <AuthProvider>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/" element={<Protected><Home /></Protected>} />
-        <Route path="/solve/:assignmentId" element={<Protected><Solve /></Protected>} />
-        <Route path="/admin" element={<Protected admin><AdminLayout /></Protected>}>
-          <Route index element={<Navigate to="projects" replace />} />
-          <Route path="projects" element={<Projects />} />
-          <Route path="projects/:id" element={<ProjectEdit />} />
-          <Route path="assignments" element={<Assignments />} />
-          <Route path="submissions" element={<Submissions />} />
-          <Route path="submissions/:id" element={<SubmissionView />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense fallback={<div className="p-8 text-vs-mute">Loading…</div>}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/" element={<Protected><Home /></Protected>} />
+          <Route path="/solve/:assignmentId" element={<Protected><Solve /></Protected>} />
+          <Route path="/admin" element={<Protected admin><AdminLayout /></Protected>}>
+            <Route index element={<Navigate to="projects" replace />} />
+            <Route path="projects" element={<Projects />} />
+            <Route path="projects/:id" element={<ProjectEdit />} />
+            <Route path="assignments" element={<Assignments />} />
+            <Route path="submissions" element={<Submissions />} />
+            <Route path="submissions/:id" element={<SubmissionView />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </AuthProvider>
   )
 }

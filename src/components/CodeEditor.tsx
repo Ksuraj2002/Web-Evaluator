@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import Editor from '@monaco-editor/react'
 
 const langForFile = (name: string) => {
@@ -8,7 +9,7 @@ const langForFile = (name: string) => {
   return 'plaintext'
 }
 
-export default function CodeEditor({
+function CodeEditor({
   file, value, onChange, readOnly,
 }: {
   file: string
@@ -36,3 +37,5 @@ export default function CodeEditor({
     />
   )
 }
+
+export default memo(CodeEditor)
