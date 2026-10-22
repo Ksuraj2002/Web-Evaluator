@@ -23,6 +23,8 @@ export interface Project {
   title: string
   description: string
   starter_files: FileMap
+  expected_output_url?: string | null
+  expected_output_path?: string | null
   created_at: string
 }
 

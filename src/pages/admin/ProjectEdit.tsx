@@ -68,6 +68,7 @@ export default function ProjectEdit() {
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [folder, setFolder] = useState('')  // optional target folder for next upload
+  const [uploadingExpected, setUploadingExpected] = useState(false)
 
   async function load() {
     if (!id) return
@@ -87,11 +88,65 @@ export default function ProjectEdit() {
     setSaving(true)
     const { error } = await supabase
       .from('projects')
-      .update({ title: project.title, description: project.description, starter_files: files })
+      .update({
+        title: project.title,
+        description: project.description,
+        starter_files: files,
+        expected_output_url: project.expected_output_url ?? null,
+        expected_output_path: project.expected_output_path ?? null,
+      })
       .eq('id', project.id)
     setSaving(false)
     if (error) return alert(error.message)
     alert('Saved')
+  }
+
+  async function uploadExpectedOutput(e: ChangeEvent<HTMLInputElement>) {
+    if (!project || !e.target.files?.[0]) return
+    const file = e.target.files[0]
+    if (!file.type.startsWith('image/')) {
+      e.target.value = ''
+      return alert('Please choose an image file (PNG, JPG, WebP, SVG, etc.)')
+    }
+    setUploadingExpected(true)
+    // Fixed path per project so re-uploads replace the previous one.
+    const ext = (file.name.split('.').pop() || 'png').toLowerCase().replace(/[^a-z0-9]/g, '') || 'png'
+    const storagePath = `${project.id}/__expected_output.${ext}`
+    // Remove any previously saved expected output at a different extension.
+    if (project.expected_output_path && project.expected_output_path !== storagePath) {
+      await supabase.storage.from('project-assets').remove([project.expected_output_path])
+    }
+    const { error } = await supabase.storage.from('project-assets').upload(storagePath, file, {
+      cacheControl: '3600',
+      upsert: true,
+      contentType: file.type || 'image/png',
+    })
+    if (error) { setUploadingExpected(false); e.target.value = ''; return alert(error.message) }
+    const { data: pub } = supabase.storage.from('project-assets').getPublicUrl(storagePath)
+    // Cache-bust so the preview updates immediately after a replace.
+    const url = `${pub.publicUrl}?v=${Date.now()}`
+    const { error: upErr } = await supabase
+      .from('projects')
+      .update({ expected_output_url: url, expected_output_path: storagePath })
+      .eq('id', project.id)
+    setUploadingExpected(false)
+    e.target.value = ''
+    if (upErr) return alert(upErr.message)
+    setProject({ ...project, expected_output_url: url, expected_output_path: storagePath })
+  }
+
+  async function removeExpectedOutput() {
+    if (!project || !project.expected_output_url) return
+    if (!confirm('Remove the expected output image?')) return
+    if (project.expected_output_path) {
+      await supabase.storage.from('project-assets').remove([project.expected_output_path])
+    }
+    const { error } = await supabase
+      .from('projects')
+      .update({ expected_output_url: null, expected_output_path: null })
+      .eq('id', project.id)
+    if (error) return alert(error.message)
+    setProject({ ...project, expected_output_url: null, expected_output_path: null })
   }
 
   // Normalize "images/" , "/images", "images//sub" -> "images/sub"
@@ -317,6 +372,37 @@ export default function ProjectEdit() {
           </div>
         ) : (
           <AssetTree assets={assets} onRemove={removeAsset} />
+        )}
+      </div>
+
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="font-medium">Expected output</h3>
+            <div className="text-xs text-vs-mute mt-0.5">
+              An image or screenshot of the final result. Students can reveal it with “Show expected output”.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="btn-ghost cursor-pointer whitespace-nowrap">
+              {uploadingExpected ? 'Uploading…' : (project.expected_output_url ? 'Replace image' : '+ Upload image')}
+              <input type="file" accept="image/*" hidden onChange={uploadExpectedOutput} disabled={uploadingExpected} />
+            </label>
+            {project.expected_output_url && (
+              <button className="btn-ghost text-red-400" onClick={removeExpectedOutput}>Remove</button>
+            )}
+          </div>
+        </div>
+        {project.expected_output_url ? (
+          <a href={project.expected_output_url} target="_blank" rel="noreferrer" className="block">
+            <img
+              src={project.expected_output_url}
+              alt="Expected output"
+              className="max-h-80 rounded border border-vs-border bg-vs-bg"
+            />
+          </a>
+        ) : (
+          <div className="text-vs-mute text-sm">No expected output image uploaded.</div>
         )}
       </div>
     </div>

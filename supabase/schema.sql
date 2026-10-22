@@ -33,6 +33,8 @@ create table if not exists public.projects (
   created_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz default now()
 );
+alter table public.projects add column if not exists expected_output_url text;
+alter table public.projects add column if not exists expected_output_path text;
 
 create table if not exists public.project_assets (
   id uuid primary key default gen_random_uuid(),

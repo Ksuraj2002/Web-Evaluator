@@ -34,6 +34,7 @@ export default function Solve() {
   const [alreadySubmittedAt, setAlreadySubmittedAt] = useState<string | null>(null)
   const [problemOpen, setProblemOpen] = useState(false)   // fullscreen reader
   const [problemCollapsed, setProblemCollapsed] = useState(false)
+  const [expectedOpen, setExpectedOpen] = useState(false)
   const [autoSubmitted, setAutoSubmitted] = useState<null | 'ok' | 'fail'>(null)
   const [autoSubmitError, setAutoSubmitError] = useState<string | null>(null)
 
@@ -111,17 +112,18 @@ export default function Solve() {
     localStorage.setItem(draftKey(assignmentId), JSON.stringify({ files, folders }))
   }, [files, folders, assignmentId, loading])
 
-  // Esc closes the problem modal or exits preview fullscreen
+  // Esc closes the problem/expected modal or exits preview fullscreen
   useEffect(() => {
-    if (!problemOpen && !previewFull) return
+    if (!problemOpen && !previewFull && !expectedOpen) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (problemOpen) setProblemOpen(false)
+      if (expectedOpen) setExpectedOpen(false)
+      else if (problemOpen) setProblemOpen(false)
       else if (previewFull) setPreviewFull(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [problemOpen, previewFull])
+  }, [problemOpen, previewFull, expectedOpen])
 
   // Live countdown to ends_at — also fires auto-submit when it hits 0.
   useEffect(() => {
@@ -334,6 +336,15 @@ export default function Solve() {
           <span className="font-medium truncate max-w-md">{assignment.project.title}</span>
         </div>
         <div className="flex items-center gap-4">
+          {assignment.project.expected_output_url && (
+            <button
+              className="btn-ghost"
+              onClick={() => setExpectedOpen(true)}
+              title="View a reference screenshot of what you need to build"
+            >
+              🖼 Show expected output
+            </button>
+          )}
           <span className={`text-vs-mute ${remaining === 'Time up' ? 'text-red-400' : ''}`}>
             Time left: <span className="text-vs-text">{remaining}</span>
           </span>
@@ -613,6 +624,46 @@ export default function Solve() {
           </section>
         )}
       </div>
+
+      {/* Expected output modal */}
+      {expectedOpen && assignment.project.expected_output_url && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+          onClick={() => setExpectedOpen(false)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-5xl max-h-[90vh] bg-vs-sidebar border border-vs-border rounded-lg shadow-2xl flex flex-col"
+          >
+            <header className="flex items-center justify-between px-6 py-3 border-b border-vs-border">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-vs-mute">Expected output</div>
+                <h2 className="font-semibold text-vs-text">{assignment.project.title}</h2>
+              </div>
+              <div className="flex items-center gap-3">
+                <a
+                  className="text-xs text-vs-accent hover:underline"
+                  href={assignment.project.expected_output_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >Open in new tab ↗</a>
+                <span className="text-xs text-vs-mute">Esc to close</span>
+                <button
+                  className="btn-ghost"
+                  onClick={() => setExpectedOpen(false)}
+                >Close ✕</button>
+              </div>
+            </header>
+            <div className="overflow-auto p-4 flex items-start justify-center bg-vs-bg">
+              <img
+                src={assignment.project.expected_output_url}
+                alt="Expected output"
+                className="max-w-full h-auto rounded"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Problem reader modal */}
       {problemOpen && (
