@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type RefObject } from 'react'
 import {
   SandpackProvider,
   SandpackPreview,
@@ -84,9 +84,14 @@ export default function ReactPreview({
       // `react-router-dom` rewrite above makes the exam-spec import
       // syntax resolve here. React Router v7's ESM-only tree doesn't
       // bundle inside Sandpack's in-browser resolver.
-      'react-router-dom': '^6.26.0',
+      // Pinned exactly: 6.28+ logs "Future Flag" warnings into the
+      // student's console on every load. This overrides the version in the
+      // project's own package.json.
+      'react-router-dom': '6.27.0',
     },
   }), [entry])
+
+  const wrapperRef = useRef<HTMLDivElement>(null)
 
   return (
     <SandpackProvider
@@ -98,7 +103,7 @@ export default function ReactPreview({
       style={{ width: '100%', height: '100%' }}
     >
       <StartWhenMounted />
-      <div className="w-full h-full flex flex-col bg-white">
+      <div ref={wrapperRef} className="w-full h-full flex flex-col bg-white">
         <div className="flex-1 min-h-0 relative">
           <SandpackPreview
             showNavigator
@@ -107,13 +112,7 @@ export default function ReactPreview({
             style={{ height: '100%', width: '100%', border: 'none' }}
           />
         </div>
-        <div className="shrink-0 h-32 border-t border-vs-border">
-          <SandpackConsole
-            style={{ height: '100%', background: '#1e1e1e' }}
-            showHeader={false}
-            resetOnPreviewRestart
-          />
-        </div>
+        <ConsolePanel containerRef={wrapperRef} />
       </div>
     </SandpackProvider>
   )
@@ -143,6 +142,129 @@ function StartWhenMounted() {
     return () => window.clearTimeout(t)
   }, [])
   return null
+}
+
+const CONSOLE_PREFS_KEY = 'web-eval:console'
+const CONSOLE_MIN_H = 80
+const CONSOLE_DEFAULT_H = 160
+// Space the preview keeps above the console when it is dragged taller.
+const PREVIEW_MIN_H = 120
+
+/**
+ * Labelled console under the preview: click the bar to collapse or expand,
+ * drag its top edge to resize. Starts collapsed, opens by itself on the
+ * first output and on every new error. Once the student collapses it while
+ * it has output, only errors reopen it. Open state and height persist.
+ */
+function ConsolePanel({ containerRef }: { containerRef: RefObject<HTMLDivElement> }) {
+  const saved = (() => {
+    try { return JSON.parse(localStorage.getItem(CONSOLE_PREFS_KEY) || '{}') } catch { return {} }
+  })()
+  const [open, setOpen] = useState<boolean>(saved.open ?? false)
+  const [height, setHeight] = useState<number>(saved.height ?? CONSOLE_DEFAULT_H)
+  const [counts, setCounts] = useState({ total: 0, errors: 0 })
+  const consoleRef = useRef<ComponentRef<typeof SandpackConsole>>(null)
+  const prev = useRef(counts)
+  const dismissed = useRef(false)
+
+  useEffect(() => {
+    try { localStorage.setItem(CONSOLE_PREFS_KEY, JSON.stringify({ open, height })) } catch {}
+  }, [open, height])
+
+  // Must be stable: SandpackConsole re-runs its effect (and calls this)
+  // whenever the callback's identity changes, so an inline function plus
+  // the setState below would loop forever.
+  const onLogsChange = useCallback((logs: { method: string }[]) => {
+    const next = { total: logs.length, errors: logs.filter(l => l.method === 'error').length }
+    if (next.total === prev.current.total && next.errors === prev.current.errors) return
+    if (next.errors > prev.current.errors) setOpen(true)
+    else if (next.total > prev.current.total && !dismissed.current) setOpen(true)
+    prev.current = next
+    setCounts(next)
+  }, [])
+
+  function toggle() {
+    if (open && counts.total > 0) dismissed.current = true
+    if (!open) dismissed.current = false
+    setOpen(!open)
+  }
+
+  // Dragging up moves the pointer over the preview iframe, which is a
+  // different origin and would swallow the moves. A transparent full-page
+  // shield keeps every move in this document until release.
+  function startResize(e: React.PointerEvent) {
+    e.preventDefault()
+    const startY = e.clientY
+    const startH = height
+    const max = Math.max(CONSOLE_MIN_H, (containerRef.current?.clientHeight ?? 600) - PREVIEW_MIN_H)
+    const shield = document.createElement('div')
+    shield.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:row-resize'
+    document.body.appendChild(shield)
+    const onMove = (ev: PointerEvent) =>
+      setHeight(Math.min(max, Math.max(CONSOLE_MIN_H, startH + startY - ev.clientY)))
+    const onUp = () => {
+      shield.remove()
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  return (
+    <div
+      className="shrink-0 relative flex flex-col border-t border-vs-border bg-[#1e1e1e]"
+      style={open ? { height } : undefined}
+    >
+      {open && (
+        <div
+          onPointerDown={startResize}
+          className="absolute -top-1 left-0 right-0 h-2 z-10 cursor-row-resize hover:bg-vs-accent/60 transition-colors"
+          title="Drag to resize"
+        />
+      )}
+      <div className="h-7 shrink-0 flex items-center justify-between bg-vs-sidebar text-xs text-vs-mute select-none">
+        <button
+          onClick={toggle}
+          className="flex-1 h-full flex items-center gap-2 px-3 text-left hover:text-vs-text"
+          title={open ? 'Collapse console' : 'Expand console'}
+        >
+          <span>{open ? '▾' : '▸'}</span>
+          <span className="uppercase tracking-wide">Console</span>
+          {counts.errors > 0 ? (
+            <span className="px-1.5 rounded bg-red-900/60 text-red-200">
+              {counts.errors} error{counts.errors === 1 ? '' : 's'}
+            </span>
+          ) : counts.total > 0 ? (
+            <span className="px-1.5 rounded bg-vs-panel text-vs-text">{counts.total}</span>
+          ) : null}
+        </button>
+        {open && counts.total > 0 && (
+          <button
+            onClick={() => { consoleRef.current?.reset(); onLogsChange([]) }}
+            className="px-3 h-full hover:text-vs-text"
+            title="Clear console"
+          >Clear</button>
+        )}
+      </div>
+      {/* Always mounted so output is captured while collapsed. */}
+      <div className={open ? 'flex-1 min-h-0 relative' : 'hidden'}>
+        <SandpackConsole
+          ref={consoleRef}
+          style={{ height: '100%', background: '#1e1e1e' }}
+          showHeader={false}
+          showResetConsoleButton={false}
+          resetOnPreviewRestart
+          onLogsChange={onLogsChange}
+        />
+        {counts.total === 0 && (
+          <div className="absolute inset-0 grid place-items-center px-4 text-center text-xs text-vs-mute pointer-events-none">
+            No output yet. console.log() messages and errors from your code show up here.
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 const SANDPACK_OPTIONS = {

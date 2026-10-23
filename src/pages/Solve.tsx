@@ -42,6 +42,26 @@ function defaultActiveFor(type: ProjectType, files: FileMap): string {
 
 function draftKey(id: string) { return `web-eval:draft:${id}` }
 
+// Slim strip at the window edge that brings a hidden panel back.
+function PanelRail({ label, icon, title, side, onOpen }: {
+  label: string
+  icon: string
+  title: string
+  side: 'left' | 'right'
+  onOpen: () => void
+}) {
+  return (
+    <button
+      onClick={onOpen}
+      title={title}
+      className={`shrink-0 w-7 flex flex-col items-center gap-2 pt-2 bg-vs-sidebar border-vs-border text-vs-mute hover:text-vs-text hover:bg-vs-panel transition-colors ${side === 'left' ? 'border-r' : 'border-l'}`}
+    >
+      <span>{icon}</span>
+      <span className="text-[11px] uppercase tracking-wide" style={{ writingMode: 'vertical-rl' }}>{label}</span>
+    </button>
+  )
+}
+
 export default function Solve() {
   const { assignmentId } = useParams()
   const nav = useNavigate()
@@ -52,6 +72,8 @@ export default function Solve() {
   const [files, setFiles] = useState<FileMap>(DEFAULT_FILES_HTML)
   const [folders, setFolders] = useState<string[]>([])  // empty folders the student made
   const [active, setActive] = useState<string>('index.html')
+  const [openTabs, setOpenTabs] = useState<string[]>([])  // editor tabs, in order
+  const tabBarRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -59,6 +81,7 @@ export default function Solve() {
   const [alreadySubmittedAt, setAlreadySubmittedAt] = useState<string | null>(null)
   const [problemOpen, setProblemOpen] = useState(false)   // fullscreen reader
   const [problemCollapsed, setProblemCollapsed] = useState(false)
+  const [assetsCollapsed, setAssetsCollapsed] = useState(false)
   const [expectedOpen, setExpectedOpen] = useState(false)
   const [autoSubmitted, setAutoSubmitted] = useState<null | 'ok' | 'fail'>(null)
   const [autoSubmitError, setAutoSubmitError] = useState<string | null>(null)
@@ -177,7 +200,9 @@ export default function Solve() {
       const initialFiles = use ? use.files : starter
       setFiles(initialFiles)
       if (use) setFolders(use.folders)
-      setActive(defaultActiveFor(type, initialFiles))
+      const first = defaultActiveFor(type, initialFiles)
+      setActive(first)
+      setOpenTabs(first in initialFiles ? [first] : [])
       if (serverDraft) {
         setLastSavedAt(new Date(serverDraft.updated_at))
         setSaveStatus('saved')
@@ -339,6 +364,18 @@ export default function Solve() {
 
   const fileNames = useMemo(() => Object.keys(files), [files])
 
+  // Keep the active tab in view when it's opened from the sidebar. Sets
+  // scrollLeft directly: scrollIntoView could also scroll the page itself.
+  useEffect(() => {
+    const bar = tabBarRef.current
+    const el = bar?.querySelector<HTMLElement>(`[data-tab="${CSS.escape(active)}"]`)
+    if (!bar || !el) return
+    if (el.offsetLeft < bar.scrollLeft) bar.scrollLeft = el.offsetLeft
+    else if (el.offsetLeft + el.offsetWidth > bar.scrollLeft + bar.clientWidth) {
+      bar.scrollLeft = el.offsetLeft + el.offsetWidth - bar.clientWidth
+    }
+  }, [active, openTabs])
+
   // Group files into a flat folder tree.
   const tree = useMemo(() => {
     const g = new Map<string, string[]>()
@@ -396,6 +433,22 @@ export default function Solve() {
   function updateFile(name: string, v: string) {
     setFiles(f => ({ ...f, [name]: v }))
   }
+  function openFile(name: string) {
+    setOpenTabs(t => (t.includes(name) ? t : [...t, name]))
+    setActive(name)
+  }
+  // Closes editor tabs; the files themselves stay. If the active tab goes,
+  // its right-hand neighbour takes over, else the left one, else none.
+  function closeTabs(names: string[]) {
+    const next = openTabs.filter(t => !names.includes(t))
+    if (names.includes(active)) {
+      const i = openTabs.indexOf(active)
+      const after = openTabs.slice(i + 1).find(t => next.includes(t))
+      const before = openTabs.slice(0, Math.max(i, 0)).reverse().find(t => next.includes(t))
+      setActive(after ?? before ?? '')
+    }
+    setOpenTabs(next)
+  }
   function addFile(preselectedDir = '') {
     const base = preselectedDir ? `${preselectedDir}/` : ''
     const name = prompt(`New file name (e.g. ${base}about.html, ${base}extra.css):`, base)?.trim()
@@ -404,7 +457,7 @@ export default function Solve() {
     if (!clean) return
     if (files[clean] != null) return alert('That file already exists')
     setFiles(f => ({ ...f, [clean]: '' }))
-    setActive(clean)
+    openFile(clean)
   }
   function addFolder() {
     const raw = prompt('New folder (e.g. components or styles/mobile):')?.trim()
@@ -420,7 +473,7 @@ export default function Solve() {
     const rest = { ...files }
     delete rest[name]
     setFiles(rest)
-    if (active === name) setActive(defaultActiveFor(type, rest))
+    closeTabs([name])
   }
   function removeFolder(dir: string) {
     const inside = fileNames.filter(n => n.startsWith(dir + '/'))
@@ -430,7 +483,7 @@ export default function Solve() {
     for (const name of inside) delete rest[name]
     setFiles(rest)
     setFolders(fs => fs.filter(x => x !== dir && !x.startsWith(dir + '/')))
-    if (inside.includes(active)) setActive(defaultActiveFor(assignment?.project.project_type || 'html', rest))
+    closeTabs(inside)
   }
 
   async function submit() {
@@ -477,7 +530,9 @@ export default function Solve() {
   }
 
   return (
-    <div className="h-screen flex flex-col">
+    // overflow-hidden: the page itself must never scroll, or scrolling past
+    // the end inside the preview iframe chains up and shifts the whole UI.
+    <div className="h-screen flex flex-col overflow-hidden">
       {/* Top bar */}
       <header className="h-10 shrink-0 border-b border-vs-border px-3 flex items-center justify-between text-sm">
         <div className="flex items-center gap-3">
@@ -573,23 +628,25 @@ export default function Solve() {
           className="shrink-0 border-r border-vs-border bg-vs-sidebar flex flex-col min-h-0"
           style={{ width: sidebarW }}
         >
-          <div className="border-b border-vs-border">
-            <button
-              onClick={() => setProblemCollapsed(c => !c)}
-              className="w-full flex items-center justify-between px-3 py-2 hover:bg-vs-panel transition-colors"
-            >
-              <div className="flex items-center gap-2">
+          <div className="shrink-0 border-b border-vs-border">
+            <div className="flex items-center hover:bg-vs-panel transition-colors">
+              <button
+                onClick={() => setProblemCollapsed(c => !c)}
+                className="flex-1 flex items-center gap-2 pl-3 py-2 text-left"
+              >
                 <span className="text-vs-mute text-xs">{problemCollapsed ? '▸' : '▾'}</span>
                 <span className="text-xs uppercase tracking-wide text-vs-mute">Problem</span>
-              </div>
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); setProblemOpen(true) }}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setProblemOpen(true) } }}
-                className="text-[11px] text-vs-accent hover:underline cursor-pointer"
-              >⤢ Expand</span>
-            </button>
+              </button>
+              <button
+                onClick={() => setProblemOpen(true)}
+                className="px-2 py-2 text-[11px] text-vs-accent hover:underline"
+              >⤢ Expand</button>
+              <button
+                onClick={() => setSidebarOpen(false)}
+                className="px-2 py-2 mr-1 text-vs-mute hover:text-vs-text"
+                title="Hide sidebar"
+              >«</button>
+            </div>
             {!problemCollapsed && (
               <div className="px-3 pb-3 max-h-72 overflow-auto">
                 {assignment.project.description
@@ -605,15 +662,17 @@ export default function Solve() {
             )}
           </div>
 
-          <div className="p-3 border-b border-vs-border">
-            <div className="flex items-center justify-between mb-1">
+          {/* Files take the remaining height and scroll, so a deep folder
+              tree can't push the Assets section out of the sidebar. */}
+          <div className="flex-1 min-h-0 flex flex-col border-b border-vs-border">
+            <div className="shrink-0 flex items-center justify-between px-3 pt-3 pb-1">
               <div className="text-xs uppercase tracking-wide text-vs-mute">Files</div>
               <div className="flex gap-2">
                 <button className="text-xs text-vs-accent hover:underline" onClick={() => addFile()}>+ file</button>
                 <button className="text-xs text-vs-accent hover:underline" onClick={addFolder}>+ folder</button>
               </div>
             </div>
-            <ul className="space-y-0.5 text-sm">
+            <ul className="flex-1 min-h-0 overflow-auto px-3 pb-3 space-y-0.5 text-sm">
               {tree.map(([dir, items]) => (
                 <li key={dir || '__root__'}>
                   {dir !== '' && (
@@ -632,7 +691,7 @@ export default function Solve() {
                         <li key={n} className="flex items-center justify-between group">
                           <button
                             className={`text-left px-2 py-1 rounded flex-1 truncate ${active === n ? 'bg-vs-panel text-vs-text' : 'text-vs-text/80 hover:bg-vs-panel'}`}
-                            onClick={() => setActive(n)}
+                            onClick={() => openFile(n)}
                             title={n}
                           >
                             {label}
@@ -647,51 +706,66 @@ export default function Solve() {
             </ul>
           </div>
 
-          <div className="p-3 overflow-auto flex-1 min-h-0">
-            <div className="text-xs uppercase tracking-wide text-vs-mute mb-2">Assets</div>
-            {assets.length === 0 ? (
-              <div className="text-xs text-vs-mute">No assets provided.</div>
-            ) : (
-              <ul className="space-y-0.5 font-mono text-xs">
-                {(() => {
-                  const groups = new Map<string, ProjectAsset[]>()
-                  for (const a of assets) {
-                    const i = a.name.indexOf('/')
-                    const k = i === -1 ? '/' : a.name.slice(0, i)
-                    if (!groups.has(k)) groups.set(k, [])
-                    groups.get(k)!.push(a)
-                  }
-                  return Array.from(groups.entries())
-                    .sort((x, y) => (x[0] === '/' ? 1 : y[0] === '/' ? -1 : x[0].localeCompare(y[0])))
-                    .map(([key, items]) => (
-                      <li key={key}>
-                        <div className="text-vs-mute mt-2 mb-0.5">{key === '/' ? '(root)' : `📁 ${key}`}</div>
-                        <ul className="pl-3 space-y-0.5">
-                          {items.map(a => {
-                            const label = key === '/' ? a.name : a.name.slice(key.length + 1)
-                            return (
-                              <li key={a.id} className="flex items-center gap-2 group">
-                                <button
-                                  className="truncate text-left flex-1 hover:text-vs-text text-vs-text/80"
-                                  title={`Click to copy: ${a.name}`}
-                                  onClick={() => navigator.clipboard.writeText(a.name)}
-                                >{label}</button>
-                                <a href={a.public_url} target="_blank" rel="noreferrer"
-                                  className="opacity-0 group-hover:opacity-100 text-vs-accent">↗</a>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      </li>
-                    ))
-                })()}
-              </ul>
+          <div className="shrink-0">
+            <button
+              onClick={() => setAssetsCollapsed(c => !c)}
+              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-vs-panel transition-colors"
+            >
+              <span className="text-vs-mute text-xs">{assetsCollapsed ? '▸' : '▾'}</span>
+              <span className="text-xs uppercase tracking-wide text-vs-mute">Assets</span>
+              {assets.length > 0 && <span className="text-[11px] text-vs-mute">({assets.length})</span>}
+            </button>
+            {!assetsCollapsed && (
+              <div className="px-3 pb-3 max-h-48 overflow-auto">
+                {assets.length === 0 ? (
+                  <div className="text-xs text-vs-mute">No assets provided.</div>
+                ) : (
+                  <ul className="space-y-0.5 font-mono text-xs">
+                    {(() => {
+                      const groups = new Map<string, ProjectAsset[]>()
+                      for (const a of assets) {
+                        const i = a.name.indexOf('/')
+                        const k = i === -1 ? '/' : a.name.slice(0, i)
+                        if (!groups.has(k)) groups.set(k, [])
+                        groups.get(k)!.push(a)
+                      }
+                      return Array.from(groups.entries())
+                        .sort((x, y) => (x[0] === '/' ? 1 : y[0] === '/' ? -1 : x[0].localeCompare(y[0])))
+                        .map(([key, items]) => (
+                          <li key={key}>
+                            <div className="text-vs-mute mt-2 mb-0.5">{key === '/' ? '(root)' : `📁 ${key}`}</div>
+                            <ul className="pl-3 space-y-0.5">
+                              {items.map(a => {
+                                const label = key === '/' ? a.name : a.name.slice(key.length + 1)
+                                return (
+                                  <li key={a.id} className="flex items-center gap-2 group">
+                                    <button
+                                      className="truncate text-left flex-1 hover:text-vs-text text-vs-text/80"
+                                      title={`Click to copy: ${a.name}`}
+                                      onClick={() => navigator.clipboard.writeText(a.name)}
+                                    >{label}</button>
+                                    <a href={a.public_url} target="_blank" rel="noreferrer"
+                                      className="opacity-0 group-hover:opacity-100 text-vs-accent">↗</a>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </li>
+                        ))
+                    })()}
+                  </ul>
+                )}
+                <div className="text-[11px] text-vs-mute mt-3 leading-relaxed">
+                  Click a file to copy its path. Reference it like <code className="text-vs-text">&lt;img src="images/logo.png"&gt;</code>.
+                </div>
+              </div>
             )}
-            <div className="text-[11px] text-vs-mute mt-3 leading-relaxed">
-              Click a file to copy its path. Reference it like <code className="text-vs-text">&lt;img src="images/logo.png"&gt;</code>.
-            </div>
           </div>
         </aside>
+        )}
+
+        {!sidebarOpen && !previewFull && (
+          <PanelRail label="Sidebar" icon="»" title="Show sidebar" side="left" onOpen={() => setSidebarOpen(true)} />
         )}
 
         {/* Sidebar drag handle */}
@@ -706,54 +780,43 @@ export default function Solve() {
         {/* Editor */}
         {!previewFull && (
         <section className="flex-1 flex flex-col min-w-0">
-          <div className="h-8 border-b border-vs-border bg-vs-sidebar flex items-center text-xs overflow-x-auto">
-            {!sidebarOpen && (
-              <button
-                onClick={() => setSidebarOpen(true)}
-                className="px-2 h-full text-vs-mute hover:text-vs-text border-r border-vs-border"
-                title="Show sidebar"
-              >▸</button>
-            )}
-            {fileNames.map(n => {
+          <div ref={tabBarRef} className="relative h-8 shrink-0 border-b border-vs-border bg-vs-sidebar flex items-stretch text-xs overflow-x-auto">
+            {openTabs.map(n => {
               const base = n.includes('/') ? n.slice(n.lastIndexOf('/') + 1) : n
               return (
-                <button
+                <div
                   key={n}
-                  className={`px-3 h-full border-r border-vs-border whitespace-nowrap ${active === n ? 'bg-vs-bg text-vs-text' : 'text-vs-mute hover:text-vs-text'}`}
-                  onClick={() => setActive(n)}
-                  title={n}
+                  data-tab={n}
+                  className={`group flex items-center border-r border-vs-border whitespace-nowrap ${active === n ? 'bg-vs-bg text-vs-text' : 'text-vs-mute hover:text-vs-text'}`}
+                  onAuxClick={e => { if (e.button === 1) closeTabs([n]) }}
                 >
-                  {base}
-                </button>
+                  <button className="pl-3 pr-1 h-full" onClick={() => setActive(n)} title={n}>
+                    {base}
+                  </button>
+                  <button
+                    onClick={() => closeTabs([n])}
+                    className={`mr-1 w-5 h-5 grid place-items-center rounded hover:bg-vs-panel hover:text-vs-text ${active === n ? '' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}
+                    title={`Close ${base}`}
+                    aria-label={`Close ${n}`}
+                  >×</button>
+                </div>
               )
             })}
-            <div className="ml-auto flex items-center gap-1 pr-2">
-              {sidebarOpen && (
-                <button
-                  onClick={() => setSidebarOpen(false)}
-                  className="px-2 h-7 rounded hover:bg-vs-panel text-vs-mute hover:text-vs-text"
-                  title="Hide sidebar"
-                >◀ Sidebar</button>
-              )}
-              {previewOpen ? (
-                <button
-                  onClick={() => setPreviewOpen(false)}
-                  className="px-2 h-7 rounded hover:bg-vs-panel text-vs-mute hover:text-vs-text"
-                  title="Hide preview"
-                >Preview ▶</button>
-              ) : (
-                <button
-                  onClick={() => setPreviewOpen(true)}
-                  className="px-2 h-7 rounded hover:bg-vs-panel text-vs-mute hover:text-vs-text"
-                  title="Show preview"
-                >◀ Preview</button>
-              )}
-            </div>
           </div>
           <div className="flex-1 min-h-0">
-            <CodeEditor file={active} value={files[active] ?? ''} onChange={v => updateFile(active, v)} />
+            {active && files[active] != null
+              ? <CodeEditor file={active} value={files[active]} onChange={v => updateFile(active, v)} />
+              : (
+                <div className="h-full grid place-items-center text-sm text-vs-mute">
+                  No file open. Pick a file from the sidebar.
+                </div>
+              )}
           </div>
         </section>
+        )}
+
+        {!previewOpen && (
+          <PanelRail label="Preview" icon="«" title="Show preview" side="right" onOpen={() => setPreviewOpen(true)} />
         )}
 
         {/* Preview drag handle */}
@@ -786,7 +849,7 @@ export default function Solve() {
                     onClick={() => setPreviewOpen(false)}
                     className="px-2 h-7 rounded hover:bg-vs-panel text-vs-mute hover:text-vs-text"
                     title="Hide preview"
-                  >✕</button>
+                  >»</button>
                 )}
               </div>
             </div>
