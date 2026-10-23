@@ -3,10 +3,15 @@ import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import CodeEditor from '../../components/CodeEditor'
 import Preview from '../../components/Preview'
-import type { ProjectAsset, Submission } from '../../lib/types'
+import ReactPreview from '../../components/ReactPreview'
+import type { ProjectAsset, ProjectType, Submission } from '../../lib/types'
 
 type Row = Submission & {
-  assignment: { assignee_email: string; project_id: string; project: { title: string } }
+  assignment: {
+    assignee_email: string
+    project_id: string
+    project: { title: string; project_type?: ProjectType }
+  }
 }
 
 export default function SubmissionView() {
@@ -20,13 +25,18 @@ export default function SubmissionView() {
       if (!id) return
       const { data } = await supabase
         .from('submissions')
-        .select('*, assignment:assignments(assignee_email, project_id, project:projects(title))')
+        .select('*, assignment:assignments(assignee_email, project_id, project:projects(title, project_type))')
         .eq('id', id)
         .maybeSingle()
       if (!data) return
       const r = data as unknown as Row
       setRow(r)
-      const first = Object.keys(r.files || {})[0]
+      // Open the main file first, as the student's editor does.
+      const names = Object.keys(r.files || {})
+      const preferred = r.assignment.project.project_type === 'react'
+        ? ['src/App.jsx', 'src/App.tsx', 'App.jsx', 'App.tsx']
+        : ['index.html']
+      const first = preferred.find(n => names.includes(n)) ?? names[0]
       if (first) setActive(first)
       const { data: a } = await supabase.from('project_assets').select('*').eq('project_id', r.assignment.project_id)
       setAssets((a as ProjectAsset[]) || [])
@@ -65,7 +75,9 @@ export default function SubmissionView() {
           <CodeEditor file={active} value={files[active] ?? ''} readOnly />
         </section>
         <section className="w-[40%] border-l border-vs-border">
-          <Preview files={files} assets={assets} />
+          {row.assignment.project.project_type === 'react'
+            ? <ReactPreview files={files} assets={assets} />
+            : <Preview files={files} assets={assets} />}
         </section>
       </div>
     </div>
