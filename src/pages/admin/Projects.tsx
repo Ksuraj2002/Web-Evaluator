@@ -2,13 +2,33 @@ import { FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import MarkdownEditor from '../../components/MarkdownEditor'
-import type { Project } from '../../lib/types'
+import type { Project, ProjectType } from '../../lib/types'
+import { WEB301_TEMPLATES } from '../../exam-templates/web301'
+
+const REACT_STARTER = {
+  'App.jsx':
+    `export default function App() {\n  return (\n    <div style={{ padding: 24, fontFamily: 'system-ui' }}>\n      <h1>Hello React</h1>\n      <p>Edit App.jsx to get started.</p>\n    </div>\n  )\n}\n`,
+  'styles.css': `body { margin: 0; }\n`,
+}
 
 export default function Projects() {
   const [rows, setRows] = useState<Project[]>([])
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
+  const [type, setType] = useState<ProjectType>('html')
+  const [templateId, setTemplateId] = useState<string>('')  // '' = no template
   const [busy, setBusy] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
+
+  function applyTemplate(id: string) {
+    setTemplateId(id)
+    if (!id) return
+    const tpl = WEB301_TEMPLATES.find(t => t.id === id)
+    if (!tpl) return
+    setType('react')
+    setTitle(tpl.title)
+    setDesc(tpl.description)
+  }
 
   async function load() {
     const { data } = await supabase.from('projects').select('*').order('created_at', { ascending: false })
@@ -19,10 +39,42 @@ export default function Projects() {
   async function create(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
-    const { error } = await supabase.from('projects').insert({ title, description: desc })
+    const payload: Record<string, unknown> = {
+      title,
+      description: desc,
+      project_type: type,
+    }
+    if (templateId) {
+      const tpl = WEB301_TEMPLATES.find(t => t.id === templateId)
+      if (tpl) payload.starter_files = tpl.starter_files
+    } else if (type === 'react') {
+      // Only seed the basic React starter when no exam template is picked.
+      payload.starter_files = REACT_STARTER
+    }
+    // HTML starters come from the DB default.
+    const { error } = await supabase.from('projects').insert(payload)
     setBusy(false)
     if (error) return alert(error.message)
-    setTitle(''); setDesc(''); load()
+    setTitle(''); setDesc(''); setType('html'); setTemplateId(''); load()
+  }
+
+  async function importAllWeb301() {
+    if (!confirm(`Create all ${WEB301_TEMPLATES.length} WEB 301 projects (P0–P9)?`)) return
+    setBulkBusy(true)
+    let ok = 0, failed = 0
+    for (const tpl of WEB301_TEMPLATES) {
+      const { error } = await supabase.from('projects').insert({
+        title: tpl.title,
+        description: tpl.description,
+        project_type: 'react',
+        starter_files: tpl.starter_files,
+      })
+      if (error) { failed++; console.error(tpl.id, error.message) }
+      else ok++
+    }
+    setBulkBusy(false)
+    alert(`Imported ${ok} / ${WEB301_TEMPLATES.length}` + (failed ? ` — ${failed} failed (see console)` : ''))
+    load()
   }
 
   async function remove(id: string) {
@@ -37,8 +89,54 @@ export default function Projects() {
       <form onSubmit={create} className="card md:col-span-1 space-y-3 h-fit">
         <h2 className="font-semibold">New project</h2>
         <div>
+          <label className="label">Import exam template (optional)</label>
+          <select
+            className="input"
+            value={templateId}
+            onChange={e => applyTemplate(e.target.value)}
+          >
+            <option value="">— None (blank project) —</option>
+            <optgroup label="WEB 301 Mid-Sem Phase 2">
+              {WEB301_TEMPLATES.map(t => (
+                <option key={t.id} value={t.id}>{t.title}</option>
+              ))}
+            </optgroup>
+          </select>
+          <div className="flex items-center justify-between mt-1">
+            <div className="text-[11px] text-vs-mute">
+              {templateId
+                ? 'Picking a template fills title, problem statement and starter files.'
+                : 'Pick one of the WEB 301 problems to pre-fill the form.'}
+            </div>
+            <button
+              type="button"
+              className="text-[11px] text-vs-accent hover:underline"
+              onClick={importAllWeb301}
+              disabled={bulkBusy}
+            >{bulkBusy ? 'Importing…' : 'Import all 10 →'}</button>
+          </div>
+        </div>
+        <div>
           <label className="label">Title</label>
           <input className="input" value={title} onChange={e => setTitle(e.target.value)} required />
+        </div>
+        <div>
+          <label className="label">Project type</label>
+          <div className="flex gap-2">
+            <label className={`flex-1 cursor-pointer border rounded px-3 py-2 text-sm ${type === 'html' ? 'border-vs-accent text-vs-text' : 'border-vs-border text-vs-mute'}`}>
+              <input type="radio" className="mr-2" name="ptype" checked={type === 'html'} onChange={() => setType('html')} />
+              HTML / CSS / JS
+            </label>
+            <label className={`flex-1 cursor-pointer border rounded px-3 py-2 text-sm ${type === 'react' ? 'border-vs-accent text-vs-text' : 'border-vs-border text-vs-mute'}`}>
+              <input type="radio" className="mr-2" name="ptype" checked={type === 'react'} onChange={() => setType('react')} />
+              React
+            </label>
+          </div>
+          <div className="text-[11px] text-vs-mute mt-1">
+            {type === 'react'
+              ? 'Preview compiles JSX in the browser (via Sandpack). React Router is pre-installed.'
+              : 'Classic iframe srcdoc preview — index.html, styles.css, script.js.'}
+          </div>
         </div>
         <div>
           <label className="label">Problem statement (markdown)</label>
@@ -58,7 +156,12 @@ export default function Projects() {
         {rows.map(p => (
           <div key={p.id} className="card flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="font-medium">{p.title}</div>
+              <div className="font-medium flex items-center gap-2">
+                {p.title}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${p.project_type === 'react' ? 'bg-cyan-900/40 text-cyan-200' : 'bg-vs-panel text-vs-mute'}`}>
+                  {p.project_type === 'react' ? 'React' : 'HTML'}
+                </span>
+              </div>
               <div className="text-xs text-vs-mute line-clamp-2 whitespace-pre-wrap">{p.description || '—'}</div>
             </div>
             <div className="flex items-center gap-2 shrink-0">

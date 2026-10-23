@@ -266,6 +266,9 @@ export default function ProjectEdit() {
       <div className="flex items-center gap-3">
         <Link to="/admin/projects" className="text-vs-mute hover:text-vs-text text-sm">← Projects</Link>
         <h2 className="font-semibold">{project.title}</h2>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${project.project_type === 'react' ? 'bg-cyan-900/40 text-cyan-200' : 'bg-vs-panel text-vs-mute'}`}>
+          {project.project_type === 'react' ? 'React' : 'HTML'}
+        </span>
         <button className="btn ml-auto" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
       </div>
 

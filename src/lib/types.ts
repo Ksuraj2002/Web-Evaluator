@@ -18,10 +18,13 @@ export interface Profile {
 
 export type FileMap = Record<string, string>
 
+export type ProjectType = 'html' | 'react'
+
 export interface Project {
   id: string
   title: string
   description: string
+  project_type: ProjectType
   starter_files: FileMap
   expected_output_url?: string | null
   expected_output_path?: string | null

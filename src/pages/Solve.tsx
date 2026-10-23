@@ -4,15 +4,40 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import CodeEditor from '../components/CodeEditor'
 import Preview from '../components/Preview'
+import ReactPreview from '../components/ReactPreview'
 import Markdown from '../components/Markdown'
-import type { Assignment, FileMap, Project, ProjectAsset } from '../lib/types'
+import type { Assignment, FileMap, Project, ProjectAsset, ProjectType } from '../lib/types'
 
 type AssignmentRow = Assignment & { project: Project }
 
-const DEFAULT_FILES: FileMap = {
+const DEFAULT_FILES_HTML: FileMap = {
   'index.html': '',
   'styles.css': '',
   'script.js': '',
+}
+
+const DEFAULT_FILES_REACT: FileMap = {
+  'App.jsx':
+    `export default function App() {\n  return <h1>Hello React</h1>\n}\n`,
+  'styles.css': '',
+}
+
+const PROTECTED_FILES_HTML = ['index.html', 'styles.css', 'script.js']
+const PROTECTED_FILES_REACT = ['App.jsx']
+
+function defaultFilesFor(type: ProjectType): FileMap {
+  return type === 'react' ? { ...DEFAULT_FILES_REACT } : { ...DEFAULT_FILES_HTML }
+}
+function protectedFilesFor(type: ProjectType): string[] {
+  return type === 'react' ? PROTECTED_FILES_REACT : PROTECTED_FILES_HTML
+}
+// First of these that exists in the project. Template projects keep App
+// under src/, and opening a missing root App.jsx would create a duplicate
+// the moment the student starts typing.
+const ACTIVE_CANDIDATES_REACT = ['src/App.jsx', 'src/App.tsx', 'App.jsx', 'App.tsx', 'src/main.jsx']
+function defaultActiveFor(type: ProjectType, files: FileMap): string {
+  const candidates = type === 'react' ? ACTIVE_CANDIDATES_REACT : ['index.html']
+  return candidates.find(n => n in files) ?? Object.keys(files).sort()[0] ?? candidates[0]
 }
 
 function draftKey(id: string) { return `web-eval:draft:${id}` }
@@ -24,7 +49,7 @@ export default function Solve() {
 
   const [assignment, setAssignment] = useState<AssignmentRow | null>(null)
   const [assets, setAssets] = useState<ProjectAsset[]>([])
-  const [files, setFiles] = useState<FileMap>(DEFAULT_FILES)
+  const [files, setFiles] = useState<FileMap>(DEFAULT_FILES_HTML)
   const [folders, setFolders] = useState<string[]>([])  // empty folders the student made
   const [active, setActive] = useState<string>('index.html')
   const [loading, setLoading] = useState(true)
@@ -37,6 +62,8 @@ export default function Solve() {
   const [expectedOpen, setExpectedOpen] = useState(false)
   const [autoSubmitted, setAutoSubmitted] = useState<null | 'ok' | 'fail'>(null)
   const [autoSubmitError, setAutoSubmitError] = useState<string | null>(null)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'offline'>('idle')
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
 
   // Panel layout (persisted in localStorage so it survives reloads)
   const LAYOUT_KEY = 'web-eval:layout'
@@ -55,9 +82,15 @@ export default function Solve() {
   // Keep latest files/profile for the auto-submit timer without re-arming it.
   const filesRef = useRef(files)
   useEffect(() => { filesRef.current = files }, [files])
+  const foldersRef = useRef(folders)
+  useEffect(() => { foldersRef.current = folders }, [folders])
   const didSubmitRef = useRef(false)
   const warnedRef = useRef(false)
   const [warnLast60, setWarnLast60] = useState(false)
+  // Autosave bookkeeping — "dirty" means we have unsaved local edits.
+  const dirtyRef = useRef(false)
+  const inFlightRef = useRef(false)
+  const skipNextChangeRef = useRef(false) // suppress the first save after initial load
 
   // Fetch assignment + project + assets
   useEffect(() => {
@@ -91,26 +124,137 @@ export default function Solve() {
         .eq('project_id', row.project_id)
       setAssets((a as ProjectAsset[]) || [])
 
-      // Load draft from localStorage else starter files
-      const draft = localStorage.getItem(draftKey(assignmentId))
-      const starter = { ...DEFAULT_FILES, ...(row.project.starter_files || {}) }
-      if (draft) {
-        try {
-          const parsed = JSON.parse(draft)
-          // Backwards compat: old drafts were just FileMap
-          if (parsed.files) { setFiles(parsed.files); setFolders(parsed.folders || []) }
-          else setFiles(parsed as FileMap)
-        } catch { setFiles(starter) }
-      } else setFiles(starter)
+      // Resolve starting content: prefer whichever draft is newer — the
+      // server-side draft (survives browser/device changes) or the local
+      // one (survives transient network loss between autosaves).
+      const type: ProjectType = row.project.project_type || 'html'
+      // If the project ships its own starter files, use them AS-IS. Only
+      // fall back to the built-in default scaffold when there are none —
+      // otherwise we'd end up with duplicate roots (e.g. /App.jsx AND
+      // /src/App.jsx) which confuses Sandpack's entry resolution.
+      const projectStarter = row.project.starter_files || {}
+      const starter = Object.keys(projectStarter).length > 0
+        ? projectStarter
+        : defaultFilesFor(type)
+      let serverDraft: { files: FileMap; folders: string[]; updated_at: string } | null = null
+      if (profile) {
+        const { data: d } = await supabase
+          .from('submission_drafts')
+          .select('files, folders, updated_at')
+          .eq('assignment_id', assignmentId)
+          .eq('student_id', profile.id)
+          .maybeSingle()
+        if (d) {
+          serverDraft = {
+            files: (d as { files: FileMap }).files || {},
+            folders: ((d as { folders?: string[] }).folders) || [],
+            updated_at: (d as { updated_at: string }).updated_at,
+          }
+        }
+      }
+
+      let localDraft: { files: FileMap; folders: string[]; at?: string } | null = null
+      try {
+        const raw = localStorage.getItem(draftKey(assignmentId))
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (parsed && parsed.files) localDraft = { files: parsed.files, folders: parsed.folders || [], at: parsed.at }
+          else if (parsed) localDraft = { files: parsed as FileMap, folders: [] }
+        }
+      } catch {}
+
+      let use: { files: FileMap; folders: string[] } | null = null
+      if (serverDraft && localDraft?.at) {
+        use = new Date(localDraft.at) > new Date(serverDraft.updated_at)
+          ? { files: localDraft.files, folders: localDraft.folders }
+          : { files: serverDraft.files, folders: serverDraft.folders }
+      } else if (serverDraft) {
+        use = { files: serverDraft.files, folders: serverDraft.folders }
+      } else if (localDraft) {
+        use = { files: localDraft.files, folders: localDraft.folders }
+      }
+
+      const initialFiles = use ? use.files : starter
+      setFiles(initialFiles)
+      if (use) setFolders(use.folders)
+      setActive(defaultActiveFor(type, initialFiles))
+      if (serverDraft) {
+        setLastSavedAt(new Date(serverDraft.updated_at))
+        setSaveStatus('saved')
+      }
+      // The initial setFiles above would otherwise mark the draft dirty; skip.
+      skipNextChangeRef.current = true
       setLoading(false)
     })()
-  }, [assignmentId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignmentId, profile?.id])
 
-  // Persist draft (files + empty folders)
+  // Persist draft locally (fast, synchronous safety net) and mark dirty for
+  // the server-side autosave below. The `at` timestamp lets the next load
+  // compare freshness against the server copy.
   useEffect(() => {
     if (!assignmentId || loading) return
-    localStorage.setItem(draftKey(assignmentId), JSON.stringify({ files, folders }))
+    try {
+      localStorage.setItem(
+        draftKey(assignmentId),
+        JSON.stringify({ files, folders, at: new Date().toISOString() }),
+      )
+    } catch {}
+    if (skipNextChangeRef.current) { skipNextChangeRef.current = false; return }
+    dirtyRef.current = true
+    setSaveStatus(s => (s === 'offline' ? 'offline' : 'saving'))
   }, [files, folders, assignmentId, loading])
+
+  // Server-side autosave: every 3s, if dirty and not already in flight, upsert
+  // the current snapshot. Also flush on page hide / unload so a last-moment
+  // tab close still ships the latest state.
+  useEffect(() => {
+    if (!assignmentId || !profile || loading || alreadySubmittedAt) return
+    let cancelled = false
+
+    async function flush() {
+      if (!dirtyRef.current || inFlightRef.current) return
+      inFlightRef.current = true
+      dirtyRef.current = false
+      const payload = {
+        assignment_id: assignmentId,
+        student_id: profile!.id,
+        files: filesRef.current,
+        folders: foldersRef.current,
+        updated_at: new Date().toISOString(),
+      }
+      const { error } = await supabase
+        .from('submission_drafts')
+        .upsert(payload, { onConflict: 'assignment_id,student_id' })
+      inFlightRef.current = false
+      if (cancelled) return
+      if (error) {
+        // Keep dirty so we retry; show "offline" so the student knows the
+        // local save is still happening even if the server didn't take it.
+        dirtyRef.current = true
+        setSaveStatus('offline')
+        // eslint-disable-next-line no-console
+        console.warn('[autosave] failed, will retry:', error.message)
+      } else {
+        setLastSavedAt(new Date())
+        setSaveStatus(dirtyRef.current ? 'saving' : 'saved')
+      }
+    }
+
+    const interval = setInterval(flush, 3000)
+    const onVisibility = () => { if (document.visibilityState === 'hidden') void flush() }
+    const onBeforeUnload = () => { void flush() }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', onBeforeUnload)
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', onBeforeUnload)
+      window.removeEventListener('beforeunload', onBeforeUnload)
+    }
+  }, [assignmentId, profile, loading, alreadySubmittedAt])
 
   // Esc closes the problem/expected modal or exits preview fullscreen
   useEffect(() => {
@@ -188,6 +332,8 @@ export default function Solve() {
       console.log('[auto-submit] success')
       setAutoSubmitted('ok')
       try { localStorage.removeItem(draftKey(assignment.id)) } catch {}
+      await supabase.from('submission_drafts').delete()
+        .eq('assignment_id', assignment.id).eq('student_id', profile.id)
     }
   }
 
@@ -268,22 +414,23 @@ export default function Solve() {
     setFolders(fs => fs.includes(clean) ? fs : [...fs, clean])
   }
   function removeFile(name: string) {
-    if (['index.html', 'styles.css', 'script.js'].includes(name)) return alert('Cannot delete default files')
+    const type: ProjectType = assignment?.project.project_type || 'html'
+    if (protectedFilesFor(type).includes(name)) return alert('Cannot delete default files')
     if (!confirm(`Delete ${name}?`)) return
-    setFiles(f => { const n = { ...f }; delete n[name]; return n })
-    if (active === name) setActive('index.html')
+    const rest = { ...files }
+    delete rest[name]
+    setFiles(rest)
+    if (active === name) setActive(defaultActiveFor(type, rest))
   }
   function removeFolder(dir: string) {
     const inside = fileNames.filter(n => n.startsWith(dir + '/'))
     if (inside.length && !confirm(`Delete folder "${dir}" and its ${inside.length} file(s)?`)) return
     if (!inside.length && !confirm(`Delete empty folder "${dir}"?`)) return
-    setFiles(f => {
-      const n = { ...f }
-      for (const name of inside) delete n[name]
-      return n
-    })
+    const rest = { ...files }
+    for (const name of inside) delete rest[name]
+    setFiles(rest)
     setFolders(fs => fs.filter(x => x !== dir && !x.startsWith(dir + '/')))
-    if (inside.includes(active)) setActive('index.html')
+    if (inside.includes(active)) setActive(defaultActiveFor(assignment?.project.project_type || 'html', rest))
   }
 
   async function submit() {
@@ -302,6 +449,8 @@ export default function Solve() {
     if (error) return alert(error.message)
     didSubmitRef.current = true
     localStorage.removeItem(draftKey(assignment.id))
+    await supabase.from('submission_drafts').delete()
+      .eq('assignment_id', assignment.id).eq('student_id', profile.id)
     alert('Submitted!')
     nav('/')
   }
@@ -345,6 +494,29 @@ export default function Solve() {
               🖼 Show expected output
             </button>
           )}
+          <span
+            className={
+              saveStatus === 'offline'
+                ? 'text-amber-300 text-xs'
+                : saveStatus === 'saving'
+                ? 'text-vs-mute text-xs'
+                : saveStatus === 'saved'
+                ? 'text-emerald-300 text-xs'
+                : 'text-vs-mute text-xs'
+            }
+            title={
+              saveStatus === 'offline'
+                ? 'Server save failed — retrying. Your work is still kept locally.'
+                : lastSavedAt
+                ? `Last saved to server: ${lastSavedAt.toLocaleTimeString()}`
+                : 'Changes are saved automatically to your account'
+            }
+          >
+            {saveStatus === 'saving' ? '⏳ Saving…'
+              : saveStatus === 'saved' ? '✓ Saved'
+              : saveStatus === 'offline' ? '⚠ Offline (local only)'
+              : '· Autosave on'}
+          </span>
           <span className={`text-vs-mute ${remaining === 'Time up' ? 'text-red-400' : ''}`}>
             Time left: <span className="text-vs-text">{remaining}</span>
           </span>
@@ -619,7 +791,9 @@ export default function Solve() {
               </div>
             </div>
             <div className="flex-1 min-h-0">
-              <Preview files={files} assets={assets} />
+              {assignment.project.project_type === 'react'
+                ? <ReactPreview files={files} assets={assets} />
+                : <Preview files={files} assets={assets} />}
             </div>
           </section>
         )}

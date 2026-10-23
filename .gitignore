@@ -3,6 +3,9 @@ node_modules/
 .pnp/
 .pnp.js
 
+# Database dumps (npm run db:dump): user emails and password hashes
+backups/
+
 # Build output
 dist/
 dist-ssr/

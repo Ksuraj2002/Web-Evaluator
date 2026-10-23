@@ -35,6 +35,8 @@ create table if not exists public.projects (
 );
 alter table public.projects add column if not exists expected_output_url text;
 alter table public.projects add column if not exists expected_output_path text;
+alter table public.projects add column if not exists project_type text not null default 'html'
+  check (project_type in ('html', 'react'));
 
 create table if not exists public.project_assets (
   id uuid primary key default gen_random_uuid(),
@@ -82,6 +84,17 @@ create index if not exists submissions_assignment_idx on public.submissions (ass
 -- One submission per student per assignment
 create unique index if not exists submissions_one_per_student on public.submissions (assignment_id, student_id);
 
+-- Server-side autosave of in-progress work. Survives browser/device changes.
+-- Row is upserted on every change (debounced client-side) and deleted on submit.
+create table if not exists public.submission_drafts (
+  assignment_id uuid references public.assignments(id) on delete cascade not null,
+  student_id uuid references public.profiles(id) on delete cascade not null,
+  files jsonb not null,
+  folders jsonb not null default '[]'::jsonb,
+  updated_at timestamptz not null default now(),
+  primary key (assignment_id, student_id)
+);
+
 -- ---------- Helpers --------------------------------------------------
 
 create or replace function public.is_admin() returns boolean
@@ -121,11 +134,12 @@ create trigger on_auth_user_created
 
 -- ---------- RLS ------------------------------------------------------
 
-alter table public.profiles         enable row level security;
-alter table public.projects         enable row level security;
-alter table public.project_assets   enable row level security;
-alter table public.assignments      enable row level security;
-alter table public.submissions      enable row level security;
+alter table public.profiles           enable row level security;
+alter table public.projects           enable row level security;
+alter table public.project_assets     enable row level security;
+alter table public.assignments        enable row level security;
+alter table public.submissions        enable row level security;
+alter table public.submission_drafts  enable row level security;
 
 -- profiles
 drop policy if exists profiles_self_read   on public.profiles;
@@ -189,6 +203,23 @@ create policy submissions_self_write on public.submissions for insert with check
       and now() <= a.ends_at + interval '30 seconds'
   )
 );
+
+-- submission_drafts (student RW own draft, admin read, within the assignment window)
+drop policy if exists drafts_self_rw      on public.submission_drafts;
+drop policy if exists drafts_admin_read   on public.submission_drafts;
+create policy drafts_self_rw on public.submission_drafts
+  for all
+  using (student_id = auth.uid())
+  with check (
+    student_id = auth.uid()
+    and exists (
+      select 1 from public.assignments a
+      where a.id = submission_drafts.assignment_id
+        and (a.is_public or lower(a.assignee_email) = public.current_email())
+        and now() <= a.ends_at + interval '30 seconds'
+    )
+  );
+create policy drafts_admin_read on public.submission_drafts for select using (public.is_admin());
 
 -- ---------- Storage bucket for assets --------------------------------
 -- Run once; safe to re-run.
