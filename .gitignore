@@ -6,6 +6,9 @@ node_modules/
 # Database dumps (npm run db:dump): user emails and password hashes
 backups/
 
+# Exam rosters and student→problem lists (student emails)
+exam-data/
+
 # Build output
 dist/
 dist-ssr/
@@ -35,6 +38,9 @@ pnpm-debug.log*
 coverage/
 .nyc_output/
 
+# Claude Code personal settings (the shared .claude/launch.json stays tracked)
+.claude/settings.local.json
+
 # Editors
 .vscode/*
 !.vscode/extensions.json
@@ -52,3 +58,6 @@ ehthumbs.db
 # Supabase CLI (if you add it later)
 supabase/.branches/
 supabase/.temp/
+HANDOFF.md 
+
+.claude/

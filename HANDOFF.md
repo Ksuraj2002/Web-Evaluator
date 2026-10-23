@@ -180,6 +180,36 @@ notify pgrst, 'reload schema';
 ### Known Sandpack quirk
 Sandpack's `SandpackProvider` key is `JSON.stringify(Object.keys(sandpackFiles).sort())`. If a new file is added, Sandpack remounts and does a clean rebuild. If only content changes, it hot-reloads. If a rewrite misses, it'd stay broken until file-set changes.
 
+## Server-side auto-submit and UID (2026-10-24)
+
+- **Auto-submit no longer depends on the student's browser.**
+  `public.collect_expired_drafts()` turns every draft left in
+  `submission_drafts` into a submission one minute after the assignment's
+  `ends_at` (past the 30 s grace), with `auto_collected = true` and
+  `submitted_at` = time of the last autosave. Existing submissions are never
+  overwritten. pg_cron runs it every minute (job `collect-expired-drafts`).
+  The browser auto-submit is unchanged and still fires first when the page
+  is open. Admin pages label these "Auto-collected".
+- **UID:** required on the Create account form, stored in `profiles.uid`
+  by the `handle_new_user` trigger (backfilled from signup metadata), shown
+  and searchable in admin Submissions and in the submission view.
+- **To apply:** run all of `supabase/schema.sql` (idempotent) in the SQL
+  editor. If pg_cron can't be enabled from SQL it prints a notice; enable it
+  under Dashboard → Integrations → Cron and run the file again. Check with
+  `select jobname, schedule from cron.job;`.
+
+## Exam setup (2026-10-24)
+
+- **SAMPLE practice problem is live:** project "SAMPLE · React Practice —
+  Movie Watchlist (not graded)", public assignment open until
+  2026-10-26 23:59 IST. Template: `WEB301_SAMPLE` in
+  `src/exam-templates/web301.ts` (kept out of "Import all 10").
+- **Student → problem list:** `exam-data/` (gitignored; student emails).
+  Round-robin P0–P9 in the roster's order; `web301-emails-by-problem.txt`
+  has one paste-ready email block per problem for Admin → Assignments.
+- **Safe Exam Browser:** `seb/web-eval-exam.seb` + `seb/README.md` (strict
+  allow-list, dry-run checklist). Set a quit password before distributing.
+
 ## Running locally
 
 ```bash

@@ -6,6 +6,7 @@ import CodeEditor from '../components/CodeEditor'
 import Preview from '../components/Preview'
 import ReactPreview from '../components/ReactPreview'
 import Markdown from '../components/Markdown'
+import { groupByFolder } from '../lib/fileTree'
 import type { Assignment, FileMap, Project, ProjectAsset, ProjectType } from '../lib/types'
 
 type AssignmentRow = Assignment & { project: Project }
@@ -377,20 +378,8 @@ export default function Solve() {
   }, [active, openTabs])
 
   // Group files into a flat folder tree.
-  const tree = useMemo(() => {
-    const g = new Map<string, string[]>()
-    for (const name of fileNames) {
-      const i = name.lastIndexOf('/')
-      const dir = i === -1 ? '' : name.slice(0, i)
-      if (!g.has(dir)) g.set(dir, [])
-      g.get(dir)!.push(name)
-    }
-    // Include empty folders the student created
-    for (const f of folders) if (!g.has(f)) g.set(f, [])
-    return Array.from(g.entries()).sort((a, b) =>
-      a[0] === '' ? -1 : b[0] === '' ? 1 : a[0].localeCompare(b[0])
-    )
-  }, [fileNames, folders])
+  // Include empty folders the student created
+  const tree = useMemo(() => groupByFolder(fileNames, folders), [fileNames, folders])
 
   function cleanPath(p: string) {
     return p.split('/').map(s => s.trim()).filter(Boolean).join('/')

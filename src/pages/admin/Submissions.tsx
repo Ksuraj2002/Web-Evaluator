@@ -5,7 +5,7 @@ import type { Submission, Assignment, Project, Profile } from '../../lib/types'
 
 type Row = Submission & {
   assignment: Assignment & { project: Pick<Project, 'title'> }
-  student: Pick<Profile, 'email' | 'full_name' | 'campus' | 'semester' | 'section'> | null
+  student: Profile | null
 }
 
 export default function Submissions() {
@@ -16,7 +16,9 @@ export default function Submissions() {
   useEffect(() => {
     supabase
       .from('submissions')
-      .select('*, assignment:assignments(*, project:projects(title)), student:profiles(email, full_name, campus, semester, section)')
+      // profiles(*) rather than a column list, so a missing optional column
+      // (e.g. uid before its migration runs) can't break the list.
+      .select('*, assignment:assignments(*, project:projects(title)), student:profiles(*)')
       .order('submitted_at', { ascending: false })
       .then(({ data }) => {
         setRows((data as unknown as Row[]) || [])
@@ -27,7 +29,7 @@ export default function Submissions() {
   const filtered = q
     ? rows.filter(r => {
         const hay = [
-          r.student?.email, r.student?.full_name, r.student?.campus,
+          r.student?.email, r.student?.full_name, r.student?.uid, r.student?.campus,
           r.student?.semester, r.student?.section, r.assignment.project.title,
         ].filter(Boolean).join(' ').toLowerCase()
         return hay.includes(q.toLowerCase())
@@ -40,7 +42,7 @@ export default function Submissions() {
         <h2 className="font-semibold">Submissions</h2>
         <input
           className="input max-w-sm ml-auto"
-          placeholder="Search name, email, campus, section, project…"
+          placeholder="Search name, UID, email, campus, section, project…"
           value={q}
           onChange={e => setQ(e.target.value)}
         />
@@ -57,10 +59,17 @@ export default function Submissions() {
                 </div>
                 <div className="text-xs text-vs-mute font-mono">{r.student?.email || r.assignment.assignee_email}</div>
                 <div className="text-xs text-vs-mute flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                  {r.student?.uid && <span className="font-mono">UID: {r.student.uid}</span>}
                   {r.student?.campus && <span>Campus: {r.student.campus}</span>}
                   {r.student?.section && <span>Section: {r.student.section}</span>}
                   {r.student?.semester && <span>Sem: {r.student.semester}</span>}
-                  <span>Submitted {new Date(r.submitted_at).toLocaleString()}</span>
+                  {r.auto_collected ? (
+                    <span className="text-amber-300" title="The student didn't submit; this is their last autosave, collected after the deadline.">
+                      Auto-collected · last saved {new Date(r.submitted_at).toLocaleString()}
+                    </span>
+                  ) : (
+                    <span>Submitted {new Date(r.submitted_at).toLocaleString()}</span>
+                  )}
                 </div>
               </div>
               <Link className="btn-ghost" to={`/admin/submissions/${r.id}`}>Open</Link>

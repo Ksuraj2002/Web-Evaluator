@@ -20,6 +20,7 @@ alter table public.profiles add column if not exists full_name text;
 alter table public.profiles add column if not exists campus text;
 alter table public.profiles add column if not exists semester text;
 alter table public.profiles add column if not exists section text;
+alter table public.profiles add column if not exists uid text;   -- university ID from signup
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
@@ -83,6 +84,8 @@ create table if not exists public.submissions (
 create index if not exists submissions_assignment_idx on public.submissions (assignment_id);
 -- One submission per student per assignment
 create unique index if not exists submissions_one_per_student on public.submissions (assignment_id, student_id);
+-- true when the server turned a leftover draft into this submission
+alter table public.submissions add column if not exists auto_collected boolean not null default false;
 
 -- Server-side autosave of in-progress work. Survives browser/device changes.
 -- Row is upserted on every change (debounced client-side) and deleted on submit.
@@ -114,11 +117,12 @@ $$;
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.profiles (id, email, full_name, campus, semester, section)
+  insert into public.profiles (id, email, full_name, uid, campus, semester, section)
   values (
     new.id,
     lower(new.email),
     nullif(new.raw_user_meta_data->>'full_name', ''),
+    nullif(trim(new.raw_user_meta_data->>'uid'), ''),
     nullif(new.raw_user_meta_data->>'campus', ''),
     nullif(new.raw_user_meta_data->>'semester', ''),
     nullif(new.raw_user_meta_data->>'section', '')
@@ -126,6 +130,12 @@ begin
   on conflict (id) do nothing;
   return new;
 end; $$;
+
+-- Backfill UIDs entered at signup before the uid column existed.
+update public.profiles p
+set uid = nullif(trim(u.raw_user_meta_data->>'uid'), '')
+from auth.users u
+where u.id = p.id and p.uid is null and nullif(trim(u.raw_user_meta_data->>'uid'), '') is not null;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
@@ -220,6 +230,50 @@ create policy drafts_self_rw on public.submission_drafts
     )
   );
 create policy drafts_admin_read on public.submission_drafts for select using (public.is_admin());
+
+-- ---------- Server-side auto-submit ---------------------------------
+-- The browser auto-submits only while the Solve page is open at the deadline.
+-- This collects every draft left behind (laptop closed, crash, reboot, no
+-- network) into a submission once the deadline has passed, so the last
+-- autosave (saved every ~3 s) always arrives. Students who already
+-- submitted keep their submission.
+create or replace function public.collect_expired_drafts() returns integer
+language plpgsql security definer set search_path = public as $$
+declare collected integer;
+begin
+  -- 1 minute: past the 30-second grace the draft and submission policies allow.
+  insert into public.submissions (assignment_id, student_id, files, submitted_at, auto_collected)
+  select d.assignment_id, d.student_id, d.files, d.updated_at, true
+  from public.submission_drafts d
+  join public.assignments a on a.id = d.assignment_id
+  where now() > a.ends_at + interval '1 minute'
+  on conflict (assignment_id, student_id) do nothing;
+  get diagnostics collected = row_count;
+
+  delete from public.submission_drafts d
+  using public.assignments a
+  where a.id = d.assignment_id and now() > a.ends_at + interval '1 minute';
+
+  return collected;
+end; $$;
+revoke all on function public.collect_expired_drafts() from public, anon, authenticated;
+
+-- Run it every minute with pg_cron. Re-running replaces the job (same name).
+-- A failure here only skips the schedule (with a notice); the rest of this
+-- file still applies. Alternative: Dashboard → Integrations → Cron.
+do $$
+begin
+  if not exists (select 1 from pg_available_extensions where name = 'pg_cron') then
+    raise notice 'pg_cron is not available here: drafts will not be auto-collected.';
+    return;
+  end if;
+  create extension if not exists pg_cron with schema pg_catalog;
+  grant usage on schema cron to postgres;
+  grant all privileges on all tables in schema cron to postgres;
+  perform cron.schedule('collect-expired-drafts', '* * * * *', 'select public.collect_expired_drafts()');
+exception when others then
+  raise notice 'Could not schedule draft collection (%). Enable pg_cron under Dashboard → Integrations → Cron and run this file again.', sqlerrm;
+end $$;
 
 -- ---------- Storage bucket for assets --------------------------------
 -- Run once; safe to re-run.

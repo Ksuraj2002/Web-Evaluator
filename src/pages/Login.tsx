@@ -16,6 +16,7 @@ export default function Login() {
   const [confirmPassword, setConfirmPassword] = useState('')
   // Signup extras
   const [fullName, setFullName] = useState('')
+  const [uid, setUid] = useState('')
   const [campus, setCampus] = useState('')
   const [semester, setSemester] = useState('')
   const [section, setSection] = useState('')
@@ -118,6 +119,10 @@ export default function Login() {
     if (!fullName.trim()) {
       setBusy(false); setErr('Please enter your name'); return
     }
+    const cleanUid = uid.replace(/\s+/g, '').toUpperCase()
+    if (!cleanUid) {
+      setBusy(false); setErr('Please enter your UID'); return
+    }
 
     const { data, error } = await supabase.auth.signUp({
       email, password,
@@ -125,6 +130,7 @@ export default function Login() {
         emailRedirectTo: `${window.location.origin}/`,
         data: {
           full_name: fullName.trim(),
+          uid: cleanUid,
           campus: campus.trim(),
           semester: semester.trim(),
           section: section.trim(),
@@ -148,6 +154,17 @@ export default function Login() {
             <div>
               <label className="label">Full name</label>
               <input className="input" value={fullName} onChange={e => setFullName(e.target.value)} required />
+            </div>
+            <div>
+              <label className="label">UID</label>
+              <input
+                className="input font-mono uppercase placeholder:normal-case placeholder:font-sans"
+                value={uid}
+                onChange={e => setUid(e.target.value)}
+                placeholder="Your university ID"
+                autoComplete="off"
+                required
+              />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>

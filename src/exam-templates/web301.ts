@@ -608,3 +608,56 @@ export const WEB301_TEMPLATES: ExamTemplate[] = PROBLEMS.map(p => ({
   description: p.description,
   starter_files: buildStarter(p),
 }))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Practice problem: same scaffold as the exam, a topic none of P0–P9 uses.
+// Kept out of WEB301_TEMPLATES so "Import all 10" never picks it up.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MOVIES_JS = `export const movies = [
+  { id: 1,  title: 'Inception',                 director: 'Christopher Nolan', genre: 'Sci-Fi', year: 2010, durationMins: 148, language: 'English', rating: 8.8, isInWatchlist: false },
+  { id: 2,  title: '3 Idiots',                  director: 'Rajkumar Hirani',   genre: 'Comedy', year: 2009, durationMins: 170, language: 'Hindi',   rating: 8.4, isInWatchlist: false },
+  { id: 3,  title: 'Mad Max: Fury Road',        director: 'George Miller',     genre: 'Action', year: 2015, durationMins: 120, language: 'English', rating: 8.1, isInWatchlist: false },
+  { id: 4,  title: 'Taare Zameen Par',          director: 'Aamir Khan',        genre: 'Drama',  year: 2007, durationMins: 165, language: 'Hindi',   rating: 8.3, isInWatchlist: false },
+  { id: 5,  title: 'Interstellar',              director: 'Christopher Nolan', genre: 'Sci-Fi', year: 2014, durationMins: 169, language: 'English', rating: 8.7, isInWatchlist: false },
+  { id: 6,  title: 'Andhadhun',                 director: 'Sriram Raghavan',   genre: 'Drama',  year: 2018, durationMins: 139, language: 'Hindi',   rating: 8.2, isInWatchlist: false },
+  { id: 7,  title: 'The Grand Budapest Hotel',  director: 'Wes Anderson',      genre: 'Comedy', year: 2014, durationMins: 99,  language: 'English', rating: 8.1, isInWatchlist: false },
+  { id: 8,  title: 'Baahubali: The Beginning',  director: 'S. S. Rajamouli',   genre: 'Action', year: 2015, durationMins: 159, language: 'Telugu',  rating: 8.0, isInWatchlist: false },
+  { id: 9,  title: 'Tenet',                     director: 'Christopher Nolan', genre: 'Sci-Fi', year: 2020, durationMins: 150, language: 'English', rating: 7.3, isInWatchlist: false },
+  { id: 10, title: 'Golmaal: Fun Unlimited',    director: 'Rohit Shetty',      genre: 'Comedy', year: 2006, durationMins: 150, language: 'Hindi',   rating: 7.4, isInWatchlist: false },
+]
+`
+
+const DESC_SAMPLE = `# SAMPLE — Movie Watchlist
+
+> **Practice problem, not graded.** Use it to get comfortable with the editor, the live preview and the Submit button before the real test. Your exam problem will be different.
+
+**File:** \`movies.js\` · **Routes:** \`/\` · \`/movies\` · \`/movies/:id\` · \`/watchlist\`
+
+Create a reusable \`MovieCard\` showing **title**, **director**, **genre** and **year**.
+
+- **Badge:** \`Top Rated ⭐\` if \`rating >= 8\`.
+- **Toggle button:** "Add to Watchlist" ↔ "Remove from Watchlist" (\`isInWatchlist\`).
+- **Dropdown filter:** genre (All, Action, Drama, Comedy, Sci-Fi).
+- **Details page** also shows **duration (mins)**, **language** and **rating**.
+- **Home** shows total movies, movies in the watchlist and top-rated movies.
+- **/watchlist** shows only watchlist movies and their total watch time in minutes, or "Your watchlist is empty".
+`
+
+const SAMPLE: ProblemConfig = {
+  id: 'sample', title: 'SAMPLE · React Practice — Movie Watchlist (not graded)',
+  item: 'Movie', itemLower: 'movie', list: 'Movies', listPath: '/movies',
+  saved: 'Watchlist', savedPath: '/watchlist', savedVerb: 'in watchlist',
+  datasetFile: 'movies.js', datasetExport: 'movies', dataset: MOVIES_JS, description: DESC_SAMPLE,
+}
+
+export const WEB301_SAMPLE: ExamTemplate = {
+  id: 'web301-sample',
+  title: SAMPLE.title,
+  description: SAMPLE.description,
+  // Retitled so nobody mistakes the practice run for the exam.
+  starter_files: Object.fromEntries(
+    Object.entries(buildStarter(SAMPLE)).map(([name, code]) =>
+      [name, code.replaceAll('WEB 301 — Mid-Sem Phase 2', 'SAMPLE — React Practice')]),
+  ),
+}

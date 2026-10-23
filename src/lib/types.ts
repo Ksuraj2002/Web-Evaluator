@@ -11,6 +11,7 @@ export interface Profile {
   email: string
   role: Role
   full_name?: string | null
+  uid?: string | null       // university ID, entered at signup
   campus?: Campus | null
   semester?: string | null
   section?: string | null
@@ -57,4 +58,7 @@ export interface Submission {
   student_id: string
   files: FileMap
   submitted_at: string
+  // Collected by the server from the last autosave after the deadline;
+  // submitted_at is then the time of that autosave.
+  auto_collected?: boolean
 }

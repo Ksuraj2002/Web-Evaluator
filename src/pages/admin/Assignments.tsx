@@ -61,44 +61,53 @@ export default function Assignments() {
     const endsISO = new Date(ends).toISOString()
     if (new Date(endsISO) <= new Date(startsISO)) return alert('End must be after start')
     setBusy(true)
+    // Re-saving an existing assignment only moves its times, in place. Never
+    // delete and re-insert: deleting an assignment also deletes the students'
+    // drafts and submissions for it.
+    const times = { starts_at: startsISO, ends_at: endsISO }
     if (isPublic) {
-      // Delete any existing public row for this project (there can be only one)
-      // and any per-email rows, then insert one public row.
-      await supabase.from('assignments').delete().eq('project_id', projectId).eq('is_public', true)
-      const { error } = await supabase.from('assignments').insert({
-        project_id: projectId,
-        assignee_email: null,
-        is_public: true,
-        starts_at: startsISO,
-        ends_at: endsISO,
-      })
+      // At most one public row per project.
+      const { data: existing, error: readErr } = await supabase.from('assignments')
+        .select('id').eq('project_id', projectId).eq('is_public', true).maybeSingle()
+      if (readErr) { setBusy(false); return alert(readErr.message) }
+      const { error } = existing
+        ? await supabase.from('assignments').update(times).eq('id', existing.id)
+        : await supabase.from('assignments').insert({
+            project_id: projectId, assignee_email: null, is_public: true, ...times,
+          })
       setBusy(false)
       if (error) return alert(error.message)
+      alert(existing ? 'Times updated for everyone.' : 'Published to everyone.')
     } else {
-      const list = emails.split(/[\s,;\n]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
+      const list = [...new Set(emails.split(/[\s,;\n]+/).map(s => s.trim().toLowerCase()).filter(Boolean))]
       if (!list.length) { setBusy(false); return alert('Add at least one email, or tick "Publish to everyone"') }
-      const payload = list.map(email => ({
-        project_id: projectId, assignee_email: email, is_public: false,
-        starts_at: startsISO, ends_at: endsISO,
+      const { data: existing, error: readErr } = await supabase.from('assignments')
+        .select('id, assignee_email').eq('project_id', projectId).eq('is_public', false)
+      if (readErr) { setBusy(false); return alert(readErr.message) }
+      const idByEmail = new Map((existing || []).map(a => [String(a.assignee_email).toLowerCase(), a.id as string]))
+      const updateIds = list.filter(email => idByEmail.has(email)).map(email => idByEmail.get(email)!)
+      const inserts = list.filter(email => !idByEmail.has(email)).map(email => ({
+        project_id: projectId, assignee_email: email, is_public: false, ...times,
       }))
-      // Per-email conflict → update start/end
-      for (const row of payload) {
-        await supabase.from('assignments').delete()
-          .eq('project_id', row.project_id)
-          .eq('is_public', false)
-          .ilike('assignee_email', row.assignee_email!)
+      if (updateIds.length) {
+        const { error } = await supabase.from('assignments').update(times).in('id', updateIds)
+        if (error) { setBusy(false); return alert(error.message) }
       }
-      const { error } = await supabase.from('assignments').insert(payload)
+      if (inserts.length) {
+        const { error } = await supabase.from('assignments').insert(inserts)
+        if (error) { setBusy(false); return alert(error.message) }
+      }
       setBusy(false)
-      if (error) return alert(error.message)
       setEmails('')
+      alert(`Times updated for ${updateIds.length}, newly assigned ${inserts.length}.`)
     }
     load()
   }
 
-  async function remove(id: string) {
-    if (!confirm('Remove assignment?')) return
-    await supabase.from('assignments').delete().eq('id', id)
+  async function remove(a: Row) {
+    const whose = a.is_public ? "every student's" : "this student's"
+    if (!confirm(`Remove this assignment? This also permanently deletes ${whose} saved draft and submission for it.`)) return
+    await supabase.from('assignments').delete().eq('id', a.id)
     load()
   }
 
@@ -212,7 +221,7 @@ export default function Assignments() {
                   <span className="ml-2 text-vs-text/70">({formatDuration(new Date(a.starts_at), new Date(a.ends_at))})</span>
                 </div>
               </div>
-              <button className="btn-ghost text-red-400" onClick={() => remove(a.id)}>Remove</button>
+              <button className="btn-ghost text-red-400" onClick={() => remove(a)}>Remove</button>
             </div>
           ))}
         </div>
