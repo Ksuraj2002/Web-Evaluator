@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import type { Assignment, Project } from '../../lib/types'
 
@@ -43,6 +43,12 @@ export default function Assignments() {
   const [ends, setEnds] = useState(toLocalInput(new Date(Date.now()+2*3600_000).toISOString()))
   const [busy, setBusy] = useState(false)
   const [filterProject, setFilterProject] = useState('')
+  const [query, setQuery] = useState('')
+  // Bulk time change: selected assignment ids and the new window for them.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkStarts, setBulkStarts] = useState('')
+  const [bulkEnds, setBulkEnds] = useState('')
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   async function load() {
     const [{ data: p }, { data: a }] = await Promise.all([
@@ -111,7 +117,70 @@ export default function Assignments() {
     load()
   }
 
-  const shown = filterProject ? rows.filter(r => r.project_id === filterProject) : rows
+  const q = query.trim().toLowerCase()
+  const shown = rows.filter(r =>
+    (!filterProject || r.project_id === filterProject) &&
+    (!q || r.project.title.toLowerCase().includes(q) || (r.assignee_email || '').toLowerCase().includes(q)))
+
+  // Distinct start→end windows, so a whole exam sitting can be picked at once.
+  const windows = useMemo(() => {
+    const m = new Map<string, Row[]>()
+    for (const r of rows) {
+      const key = `${new Date(r.starts_at).toISOString()}|${new Date(r.ends_at).toISOString()}`
+      m.set(key, [...(m.get(key) || []), r])
+    }
+    return [...m.entries()].sort((a, b) => b[1].length - a[1].length)
+  }, [rows])
+
+  // Fills the new-times inputs from a row the first time something is picked.
+  function prefill(r: Row) {
+    if (!bulkStarts) setBulkStarts(toLocalInput(r.starts_at))
+    if (!bulkEnds) setBulkEnds(toLocalInput(r.ends_at))
+  }
+  function toggle(r: Row) {
+    setSelected(sel => {
+      const next = new Set(sel)
+      if (next.has(r.id)) next.delete(r.id)
+      else next.add(r.id)
+      return next
+    })
+    prefill(r)
+  }
+  function selectAllShown() {
+    setSelected(sel => new Set([...sel, ...shown.map(r => r.id)]))
+    if (shown[0]) prefill(shown[0])
+  }
+  function selectWindow(key: string) {
+    const group = windows.find(([k]) => k === key)?.[1]
+    if (!group) return
+    setSelected(new Set(group.map(r => r.id)))
+    setBulkStarts(toLocalInput(group[0].starts_at))
+    setBulkEnds(toLocalInput(group[0].ends_at))
+  }
+  function clearSelection() {
+    setSelected(new Set()); setBulkStarts(''); setBulkEnds('')
+  }
+
+  // Moves the selected assignments' times in place: the same rows stay, so
+  // students' drafts and submissions are untouched.
+  async function applyBulk() {
+    if (!bulkStarts || !bulkEnds) return alert('Set the new start and end')
+    const startsISO = new Date(bulkStarts).toISOString()
+    const endsISO = new Date(bulkEnds).toISOString()
+    if (new Date(endsISO) <= new Date(startsISO)) return alert('End must be after start')
+    const ids = [...selected]
+    if (!confirm(`Change the times of ${ids.length} assignment(s) to ${prettyLocal(bulkStarts)} → ${prettyLocal(bulkEnds)}?`)) return
+    setBulkBusy(true)
+    for (let i = 0; i < ids.length; i += 100) {
+      const { error } = await supabase.from('assignments')
+        .update({ starts_at: startsISO, ends_at: endsISO }).in('id', ids.slice(i, i + 100))
+      if (error) { setBulkBusy(false); load(); return alert(`Stopped after ${i} of ${ids.length}: ${error.message}`) }
+    }
+    setBulkBusy(false)
+    alert(`Times changed for ${ids.length} assignment(s).`)
+    clearSelection()
+    load()
+  }
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -198,18 +267,65 @@ export default function Assignments() {
       </form>
 
       <div className="md:col-span-2 space-y-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <h2 className="font-semibold">Assignments</h2>
-          <select className="input max-w-[280px] ml-auto" value={filterProject} onChange={e => setFilterProject(e.target.value)}>
+          <input
+            className="input max-w-[220px] ml-auto"
+            placeholder="Search title or email…"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+          <select className="input max-w-[280px]" value={filterProject} onChange={e => setFilterProject(e.target.value)}>
             <option value="">All projects</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
           </select>
         </div>
+
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <select className="input max-w-[360px]" value="" onChange={e => selectWindow(e.target.value)}>
+            <option value="">Select by time slot…</option>
+            {windows.map(([key, group]) => (
+              <option key={key} value={key}>
+                {prettyLocal(group[0].starts_at)} → {prettyLocal(group[0].ends_at)} · {group.length}
+              </option>
+            ))}
+          </select>
+          <button className="btn-ghost" onClick={selectAllShown} disabled={!shown.length}>
+            Select all shown ({shown.length})
+          </button>
+        </div>
+
+        {selected.size > 0 && (
+          <div className="card flex flex-wrap items-end gap-3 border-vs-accent">
+            <div className="text-sm font-medium self-center">{selected.size} selected</div>
+            <div>
+              <label className="label">New start</label>
+              <input type="datetime-local" className="input" value={bulkStarts} onChange={e => setBulkStarts(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">New end</label>
+              <input type="datetime-local" className="input" value={bulkEnds} onChange={e => setBulkEnds(e.target.value)} />
+            </div>
+            <button className="btn" onClick={applyBulk} disabled={bulkBusy}>{bulkBusy ? '…' : 'Change times'}</button>
+            <button className="btn-ghost" onClick={clearSelection} disabled={bulkBusy}>Clear</button>
+            <div className="w-full text-[11px] text-vs-mute">
+              Updates the selected assignments in place. Students' drafts and submissions are kept.
+            </div>
+          </div>
+        )}
+
         {shown.length === 0 && <div className="text-vs-mute text-sm">No assignments.</div>}
         <div className="space-y-2">
           {shown.map(a => (
             <div key={a.id} className="card flex items-center justify-between gap-4">
-              <div className="min-w-0">
+              <input
+                type="checkbox"
+                className="shrink-0"
+                checked={selected.has(a.id)}
+                onChange={() => toggle(a)}
+                aria-label={`Select ${a.assignee_email || 'public'} · ${a.project.title}`}
+              />
+              <div className="min-w-0 flex-1">
                 <div className="text-sm">
                   {a.is_public
                     ? <span className="inline-block mr-2 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-emerald-900/40 border border-emerald-700 text-emerald-300">Public</span>

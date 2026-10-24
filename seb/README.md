@@ -1,15 +1,21 @@
 # Safe Exam Browser config
 
-`web-eval-exam.seb` starts SEB on https://web-evaluator.vercel.app/ and blocks
-every site except the ones the platform needs. It's an unencrypted settings
-file with **no quit password**, so finish it before handing it out.
+Two files with the same settings:
+
+- `web-eval-exam.seb`: **the one to hand out.** Starts SEB on
+  https://web-evaluator.vercel.app/, blocks every site except the ones the
+  platform needs, and has a quit password. It's git-ignored: the repo is
+  public and a short password can be recovered from its hash.
+- `web-eval-exam.template.seb`: same settings, no quit password (tracked).
+  To make a new hand-out file, open it in the SEB Config Tool (Windows) or
+  SEB → Settings (macOS), set *General → Quit/unlock password*, and save.
 
 ## Before the exam
 
-1. **Add a quit password.** Open the file in the SEB Config Tool (Windows) or
-   SEB → Settings (macOS), go to *General*, set *Quit/unlock password*, then
-   save it, encrypted with a settings password if you like. Without one,
-   students can quit SEB whenever they want.
+1. **Save the hand-out file encrypted** (recommended). It's plain XML, so a
+   student who opens it in a text editor sees the password hash. Open it in
+   the SEB Config Tool and save with a *settings password*; students then need
+   that password to read it, but SEB still starts the exam from it.
 2. **Have students sign up before the exam, outside SEB**, with the exact
    email they were assigned. The confirmation email can't be opened inside SEB.
 3. **Do a dry run** on one exam-room machine with this file:

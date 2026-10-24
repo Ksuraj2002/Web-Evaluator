@@ -9,6 +9,10 @@ backups/
 # Exam rosters and student→problem lists (student emails)
 exam-data/
 
+# SEB config with the quit-password hash (a short password is crackable from
+# its hash, and this repo is public). The template without it stays tracked.
+seb/web-eval-exam.seb
+
 # Build output
 dist/
 dist-ssr/

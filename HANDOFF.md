@@ -207,8 +207,9 @@ Sandpack's `SandpackProvider` key is `JSON.stringify(Object.keys(sandpackFiles).
 - **Student → problem list:** `exam-data/` (gitignored; student emails).
   Round-robin P0–P9 in the roster's order; `web301-emails-by-problem.txt`
   has one paste-ready email block per problem for Admin → Assignments.
-- **Safe Exam Browser:** `seb/web-eval-exam.seb` + `seb/README.md` (strict
-  allow-list, dry-run checklist). Set a quit password before distributing.
+- **Safe Exam Browser:** `seb/web-eval-exam.seb` (hand-out file with the quit
+  password, git-ignored), `seb/web-eval-exam.template.seb` (no password,
+  tracked) and `seb/README.md` (strict allow-list, dry-run checklist).
 
 ## Running locally
 

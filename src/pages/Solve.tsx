@@ -6,7 +6,7 @@ import CodeEditor from '../components/CodeEditor'
 import Preview from '../components/Preview'
 import ReactPreview from '../components/ReactPreview'
 import Markdown from '../components/Markdown'
-import { groupByFolder } from '../lib/fileTree'
+import FileTree from '../components/FileTree'
 import type { Assignment, FileMap, Project, ProjectAsset, ProjectType } from '../lib/types'
 
 type AssignmentRow = Assignment & { project: Project }
@@ -378,11 +378,22 @@ export default function Solve() {
   }, [active, openTabs])
 
   // Group files into a flat folder tree.
-  // Include empty folders the student created
-  const tree = useMemo(() => groupByFolder(fileNames, folders), [fileNames, folders])
-
+  // Normalises a typed path: trims segments, drops empty and "." ones, and
+  // resolves ".." like a shell, never above the project root.
   function cleanPath(p: string) {
-    return p.split('/').map(s => s.trim()).filter(Boolean).join('/')
+    const out: string[] = []
+    for (const seg of p.split('/').map(s => s.trim())) {
+      if (!seg || seg === '.') continue
+      if (seg === '..') out.pop()
+      else out.push(seg)
+    }
+    return out.join('/')
+  }
+  const isFolderPath = (p: string) => folders.includes(p) || fileNames.some(n => n.startsWith(p + '/'))
+  // True when some parent segment of `p` is an existing file (e.g. "App.jsx/x").
+  const isInsideFile = (p: string) => {
+    const segs = p.split('/')
+    return segs.slice(0, -1).some((_, i) => files[segs.slice(0, i + 1).join('/')] != null)
   }
 
   // Drag a vertical splitter: pass the setter + which side the value lives on.
@@ -445,15 +456,23 @@ export default function Solve() {
     const clean = cleanPath(name)
     if (!clean) return
     if (files[clean] != null) return alert('That file already exists')
+    if (isFolderPath(clean)) return alert('A folder with that name already exists')
+    if (isInsideFile(clean)) return alert("That path goes inside a file. Files can only go in folders.")
     setFiles(f => ({ ...f, [clean]: '' }))
     openFile(clean)
   }
-  function addFolder() {
-    const raw = prompt('New folder (e.g. components or styles/mobile):')?.trim()
+  // `parentDir` is where the folder goes; the typed name may nest further
+  // (e.g. "ui/buttons"), and any missing folders on the way are created.
+  function addFolder(parentDir = '') {
+    const where = parentDir ? `inside ${parentDir}/` : 'at the top level'
+    const raw = prompt(`New folder ${where} (you can nest, e.g. components/ui):`)?.trim()
     if (!raw) return
-    const clean = cleanPath(raw)
+    const clean = cleanPath(parentDir ? `${parentDir}/${raw}` : raw)
     if (!clean) return
-    setFolders(fs => fs.includes(clean) ? fs : [...fs, clean])
+    if (files[clean] != null) return alert('A file with that name already exists')
+    if (isFolderPath(clean)) return alert('That folder already exists')
+    if (isInsideFile(clean)) return alert("That path goes inside a file. Folders can only go in folders.")
+    setFolders(fs => [...fs, clean])
   }
   function removeFile(name: string) {
     const type: ProjectType = assignment?.project.project_type || 'html'
@@ -462,6 +481,9 @@ export default function Solve() {
     const rest = { ...files }
     delete rest[name]
     setFiles(rest)
+    // Keep the folder even when its last file goes, as editors do.
+    const dir = name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : ''
+    if (dir) setFolders(fs => (fs.includes(dir) ? fs : [...fs, dir]))
     closeTabs([name])
   }
   function removeFolder(dir: string) {
@@ -471,7 +493,12 @@ export default function Solve() {
     const rest = { ...files }
     for (const name of inside) delete rest[name]
     setFiles(rest)
-    setFolders(fs => fs.filter(x => x !== dir && !x.startsWith(dir + '/')))
+    // Drop the folder and everything under it, but keep its parent folder.
+    const parent = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : ''
+    setFolders(fs => {
+      const kept = fs.filter(x => x !== dir && !x.startsWith(dir + '/'))
+      return parent && !kept.includes(parent) ? [...kept, parent] : kept
+    })
     closeTabs(inside)
   }
 
@@ -658,41 +685,21 @@ export default function Solve() {
               <div className="text-xs uppercase tracking-wide text-vs-mute">Files</div>
               <div className="flex gap-2">
                 <button className="text-xs text-vs-accent hover:underline" onClick={() => addFile()}>+ file</button>
-                <button className="text-xs text-vs-accent hover:underline" onClick={addFolder}>+ folder</button>
+                <button className="text-xs text-vs-accent hover:underline" onClick={() => addFolder()}>+ folder</button>
               </div>
             </div>
-            <ul className="flex-1 min-h-0 overflow-auto px-3 pb-3 space-y-0.5 text-sm">
-              {tree.map(([dir, items]) => (
-                <li key={dir || '__root__'}>
-                  {dir !== '' && (
-                    <div className="group flex items-center justify-between text-vs-mute text-xs mt-2 mb-0.5">
-                      <div className="truncate">📁 {dir}</div>
-                      <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                        <button className="hover:text-vs-text" onClick={() => addFile(dir)} title="New file in folder">+</button>
-                        <button className="hover:text-red-400" onClick={() => removeFolder(dir)} title="Delete folder">×</button>
-                      </div>
-                    </div>
-                  )}
-                  <ul className={dir === '' ? '' : 'pl-3'}>
-                    {items.map(n => {
-                      const label = dir === '' ? n : n.slice(dir.length + 1)
-                      return (
-                        <li key={n} className="flex items-center justify-between group">
-                          <button
-                            className={`text-left px-2 py-1 rounded flex-1 truncate ${active === n ? 'bg-vs-panel text-vs-text' : 'text-vs-text/80 hover:bg-vs-panel'}`}
-                            onClick={() => openFile(n)}
-                            title={n}
-                          >
-                            {label}
-                          </button>
-                          <button onClick={() => removeFile(n)} className="opacity-0 group-hover:opacity-100 text-xs text-vs-mute hover:text-red-400 px-1">×</button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </li>
-              ))}
-            </ul>
+            <div className="flex-1 min-h-0 overflow-auto px-2 pb-3">
+              <FileTree
+                files={fileNames}
+                folders={folders}
+                active={active}
+                onOpen={openFile}
+                onAddFile={addFile}
+                onAddFolder={addFolder}
+                onDeleteFile={removeFile}
+                onDeleteFolder={removeFolder}
+              />
+            </div>
           </div>
 
           <div className="shrink-0">

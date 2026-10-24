@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { groupByFolder } from '../../lib/fileTree'
 import CodeEditor from '../../components/CodeEditor'
+import FileTree from '../../components/FileTree'
 import Preview from '../../components/Preview'
 import ReactPreview from '../../components/ReactPreview'
 import type { Profile, ProjectAsset, ProjectType, Submission } from '../../lib/types'
@@ -49,7 +49,7 @@ export default function SubmissionView() {
   }, [id])
 
   const files = row?.files || {}
-  const tree = useMemo(() => groupByFolder(Object.keys(files)), [files])
+  const names = useMemo(() => Object.keys(files), [files])
 
   if (missing) {
     return (
@@ -82,26 +82,9 @@ export default function SubmissionView() {
       <div className="flex border border-vs-border rounded overflow-hidden" style={{ height: '72vh' }}>
         <aside className="w-48 border-r border-vs-border bg-vs-sidebar overflow-auto">
           <div className="text-xs uppercase text-vs-mute p-3 pb-1">Files</div>
-          <ul className="pb-2 text-sm">
-            {tree.map(([dir, items]) => (
-              <li key={dir || '__root__'}>
-                {dir !== '' && (
-                  <div className="truncate text-vs-mute text-xs px-3 mt-2 mb-0.5" title={dir}>📁 {dir}</div>
-                )}
-                <ul className={dir === '' ? '' : 'pl-3'}>
-                  {items.map(n => (
-                    <li key={n}>
-                      <button
-                        className={`w-full text-left truncate px-3 py-1.5 ${active === n ? 'bg-vs-panel text-vs-text' : 'text-vs-text/80 hover:bg-vs-panel'}`}
-                        onClick={() => setActive(n)}
-                        title={n}
-                      >{dir === '' ? n : n.slice(dir.length + 1)}</button>
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            ))}
-          </ul>
+          <div className="px-1 pb-2">
+            <FileTree files={names} active={active} onOpen={setActive} />
+          </div>
         </aside>
         <section className="flex-1 min-w-0">
           <CodeEditor file={active} value={files[active] ?? ''} readOnly />
