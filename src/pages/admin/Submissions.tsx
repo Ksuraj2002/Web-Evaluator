@@ -1,45 +1,72 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import type { Submission, Assignment, Project, Profile } from '../../lib/types'
+import type { Submission, Assignment, Project, Profile, Evaluation } from '../../lib/types'
 
 type Row = Submission & {
   assignment: Assignment & { project: Pick<Project, 'title'> }
   student: Profile | null
+  evaluation: Pick<Evaluation, 'total' | 'max_total' | 'graded_at'> | null
 }
+
+type GradeFilter = 'all' | 'graded' | 'ungraded'
 
 export default function Submissions() {
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState('')
+  const [gradeFilter, setGradeFilter] = useState<GradeFilter>('all')
 
   useEffect(() => {
     supabase
       .from('submissions')
       // profiles(*) rather than a column list, so a missing optional column
       // (e.g. uid before its migration runs) can't break the list.
-      .select('*, assignment:assignments(*, project:projects(title)), student:profiles(*)')
+      .select('*, assignment:assignments(*, project:projects(title)), student:profiles(*), evaluation:evaluations(total,max_total,graded_at)')
       .order('submitted_at', { ascending: false })
       .then(({ data }) => {
-        setRows((data as unknown as Row[]) || [])
+        const normalized = ((data as unknown as (Omit<Row, 'evaluation'> & { evaluation: Row['evaluation'] | Row['evaluation'][] })[]) || []).map(r => ({
+          ...r,
+          // Supabase returns 1:1 relations as an array; flatten to the single row.
+          evaluation: Array.isArray(r.evaluation) ? (r.evaluation[0] ?? null) : (r.evaluation ?? null),
+        })) as Row[]
+        setRows(normalized)
         setLoading(false)
       })
   }, [])
 
-  const filtered = q
-    ? rows.filter(r => {
-        const hay = [
-          r.student?.email, r.student?.full_name, r.student?.uid, r.student?.campus,
-          r.student?.semester, r.student?.section, r.assignment.project.title,
-        ].filter(Boolean).join(' ').toLowerCase()
-        return hay.includes(q.toLowerCase())
-      })
-    : rows
+  const counts = useMemo(() => ({
+    all: rows.length,
+    graded: rows.filter(r => r.evaluation).length,
+    ungraded: rows.filter(r => !r.evaluation).length,
+  }), [rows])
+
+  const filtered = rows.filter(r => {
+    if (gradeFilter === 'graded' && !r.evaluation) return false
+    if (gradeFilter === 'ungraded' && r.evaluation) return false
+    if (!q) return true
+    const hay = [
+      r.student?.email, r.student?.full_name, r.student?.uid, r.student?.campus,
+      r.student?.semester, r.student?.section, r.assignment.project.title,
+    ].filter(Boolean).join(' ').toLowerCase()
+    return hay.includes(q.toLowerCase())
+  })
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <h2 className="font-semibold">Submissions</h2>
+        <div className="flex items-center gap-1 text-xs">
+          {(['all', 'ungraded', 'graded'] as GradeFilter[]).map(f => (
+            <button
+              key={f}
+              onClick={() => setGradeFilter(f)}
+              className={`px-2 py-1 rounded border ${gradeFilter === f ? 'bg-vs-accent text-white border-vs-accent' : 'border-vs-border text-vs-mute hover:text-vs-text'}`}
+            >
+              {f[0].toUpperCase() + f.slice(1)} <span className="opacity-70">({counts[f]})</span>
+            </button>
+          ))}
+        </div>
         <input
           className="input max-w-sm ml-auto"
           placeholder="Search name, UID, email, campus, section, project…"
@@ -72,7 +99,18 @@ export default function Submissions() {
                   )}
                 </div>
               </div>
-              <Link className="btn-ghost" to={`/admin/submissions/${r.id}`}>Open</Link>
+              <div className="flex items-center gap-3 shrink-0">
+                {r.evaluation ? (
+                  <span className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono">
+                    {r.evaluation.total}/{r.evaluation.max_total}
+                  </span>
+                ) : (
+                  <span className="text-xs px-2 py-1 rounded border border-vs-border text-vs-mute">Not graded</span>
+                )}
+                <Link className="btn-ghost" to={`/admin/submissions/${r.id}`}>
+                  {r.evaluation ? 'Review' : 'Grade'}
+                </Link>
+              </div>
             </div>
           ))}
         </div>

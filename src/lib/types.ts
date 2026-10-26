@@ -62,3 +62,22 @@ export interface Submission {
   // submitted_at is then the time of that autosave.
   auto_collected?: boolean
 }
+
+export const RUBRIC: { key: string; label: string; max: number }[] = [
+  { key: 'correctness',  label: 'Correctness',  max: 10 },
+  { key: 'design',       label: 'Design / UI',  max: 10 },
+  { key: 'code_quality', label: 'Code Quality', max: 10 },
+]
+export const RUBRIC_MAX = RUBRIC.reduce((n, r) => n + r.max, 0)
+
+export interface Evaluation {
+  id: string
+  submission_id: string
+  scores: Record<string, number>
+  total: number
+  max_total: number
+  feedback: string
+  graded_by: string | null
+  graded_at: string
+  updated_at: string
+}

@@ -87,6 +87,22 @@ create unique index if not exists submissions_one_per_student on public.submissi
 -- true when the server turned a leftover draft into this submission
 alter table public.submissions add column if not exists auto_collected boolean not null default false;
 
+-- Admin's grading of a submission. One evaluation per submission.
+-- scores is a free-form jsonb (e.g. { correctness: 8, design: 7, code_quality: 9 })
+-- so the rubric can evolve without migrations.
+create table if not exists public.evaluations (
+  id uuid primary key default gen_random_uuid(),
+  submission_id uuid references public.submissions(id) on delete cascade not null unique,
+  scores jsonb not null default '{}'::jsonb,
+  total numeric not null default 0,
+  max_total numeric not null default 30,
+  feedback text not null default '',
+  graded_by uuid references public.profiles(id) on delete set null,
+  graded_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists evaluations_submission_idx on public.evaluations (submission_id);
+
 -- Server-side autosave of in-progress work. Survives browser/device changes.
 -- Row is upserted on every change (debounced client-side) and deleted on submit.
 create table if not exists public.submission_drafts (
@@ -150,6 +166,7 @@ alter table public.project_assets     enable row level security;
 alter table public.assignments        enable row level security;
 alter table public.submissions        enable row level security;
 alter table public.submission_drafts  enable row level security;
+alter table public.evaluations        enable row level security;
 
 -- profiles
 drop policy if exists profiles_self_read   on public.profiles;
@@ -230,6 +247,18 @@ create policy drafts_self_rw on public.submission_drafts
     )
   );
 create policy drafts_admin_read on public.submission_drafts for select using (public.is_admin());
+
+-- evaluations: admin RW, student may read their own grade
+drop policy if exists evaluations_admin_all   on public.evaluations;
+drop policy if exists evaluations_self_read   on public.evaluations;
+create policy evaluations_admin_all on public.evaluations
+  for all using (public.is_admin()) with check (public.is_admin());
+create policy evaluations_self_read on public.evaluations for select using (
+  exists (
+    select 1 from public.submissions s
+    where s.id = evaluations.submission_id and s.student_id = auth.uid()
+  )
+);
 
 -- ---------- Server-side auto-submit ---------------------------------
 -- The browser auto-submits only while the Solve page is open at the deadline.
