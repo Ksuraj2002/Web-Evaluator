@@ -87,6 +87,12 @@ export function courseFor(projectType: ProjectType | undefined | null): Course {
   return projectType === 'react' ? 'WEB 301' : 'WEB 101'
 }
 
+export type ExamGroup = 'Mid Term' | 'Practice'
+export const EXAM_GROUPS: ExamGroup[] = ['Mid Term', 'Practice']
+export function examGroupFor(projectTitle: string | undefined | null): ExamGroup {
+  return (projectTitle || '').toUpperCase().includes('SAMPLE') ? 'Practice' : 'Mid Term'
+}
+
 // Back-compat: default export used by code that doesn't know the project type.
 export const RUBRIC: RubricCriterion[] = HTML_RUBRIC
 export const RUBRIC_MAX = HTML_RUBRIC.reduce((n, r) => n + r.max, 0)
