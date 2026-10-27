@@ -7,7 +7,7 @@ import FileTree from '../../components/FileTree'
 import Preview from '../../components/Preview'
 import ReactPreview from '../../components/ReactPreview'
 import type { Evaluation, Profile, ProjectAsset, ProjectType, Submission } from '../../lib/types'
-import { RUBRIC, RUBRIC_MAX } from '../../lib/types'
+import { rubricFor } from '../../lib/types'
 
 type Row = Submission & {
   assignment: {
@@ -28,9 +28,9 @@ export default function SubmissionView() {
 
   // Grading state
   const [evalRow, setEvalRow] = useState<Evaluation | null>(null)
-  const [scores, setScores] = useState<Record<string, string>>(() =>
-    Object.fromEntries(RUBRIC.map(r => [r.key, '']))
-  )
+  const rubric = useMemo(() => rubricFor(row?.assignment.project.project_type), [row?.assignment.project.project_type])
+  const rubricMax = useMemo(() => rubric.reduce((n, r) => n + r.max, 0), [rubric])
+  const [scores, setScores] = useState<Record<string, string>>({})
   const [feedback, setFeedback] = useState('')
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<string | null>(null)
@@ -57,11 +57,14 @@ export default function SubmissionView() {
       setAssets((a as ProjectAsset[]) || [])
 
       const { data: ev } = await supabase.from('evaluations').select('*').eq('submission_id', id).maybeSingle()
+      const rubricForThis = rubricFor(r.assignment.project.project_type)
       if (ev) {
         const e = ev as Evaluation
         setEvalRow(e)
         setFeedback(e.feedback || '')
-        setScores(Object.fromEntries(RUBRIC.map(r => [r.key, e.scores?.[r.key] != null ? String(e.scores[r.key]) : ''])))
+        setScores(Object.fromEntries(rubricForThis.map(r => [r.key, e.scores?.[r.key] != null ? String(e.scores[r.key]) : ''])))
+      } else {
+        setScores(Object.fromEntries(rubricForThis.map(r => [r.key, ''])))
       }
     })()
   }, [id])
@@ -69,10 +72,10 @@ export default function SubmissionView() {
   const files = row?.files || {}
   const names = useMemo(() => Object.keys(files), [files])
 
-  const total = useMemo(() => RUBRIC.reduce((n, r) => {
+  const total = useMemo(() => rubric.reduce((n, r) => {
     const v = Number(scores[r.key])
     return n + (Number.isFinite(v) ? v : 0)
-  }, 0), [scores])
+  }, 0), [scores, rubric])
 
   function setScore(key: string, raw: string, max: number) {
     if (raw === '') { setScores(s => ({ ...s, [key]: '' })); return }
@@ -87,9 +90,9 @@ export default function SubmissionView() {
     setSaving(true); setErr(null)
     const payload = {
       submission_id: row.id,
-      scores: Object.fromEntries(RUBRIC.map(r => [r.key, Number(scores[r.key]) || 0])),
+      scores: Object.fromEntries(rubric.map(r => [r.key, Number(scores[r.key]) || 0])),
       total,
-      max_total: RUBRIC_MAX,
+      max_total: rubricMax,
       feedback,
       graded_by: profile.id,
       graded_at: new Date().toISOString(),
@@ -113,7 +116,7 @@ export default function SubmissionView() {
     if (error) { setErr(error.message); return }
     setEvalRow(null)
     setFeedback('')
-    setScores(Object.fromEntries(RUBRIC.map(r => [r.key, ''])))
+    setScores(Object.fromEntries(rubric.map(r => [r.key, ''])))
     setSavedAt(null)
   }
 
@@ -171,7 +174,7 @@ export default function SubmissionView() {
         <div className="flex items-center gap-3">
           <h3 className="font-semibold">Evaluation</h3>
           <span className="text-sm text-vs-mute">
-            Total: <span className="text-vs-text font-mono">{total}</span> / {RUBRIC_MAX}
+            Total: <span className="text-vs-text font-mono">{total}</span> / {rubricMax}
           </span>
           {evalRow?.graded_at && (
             <span className="text-xs text-vs-mute ml-auto">
@@ -181,16 +184,16 @@ export default function SubmissionView() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {RUBRIC.map(r => (
+          {rubric.map(r => (
             <div key={r.key}>
-              <label className="label">{r.label} (0–{r.max})</label>
+              <label className="label" title={r.desc}>{r.label} (0–{r.max})</label>
               <input
                 type="number"
                 min={0}
                 max={r.max}
                 step={0.5}
                 className="input"
-                value={scores[r.key]}
+                value={scores[r.key] ?? ''}
                 onChange={e => setScore(r.key, e.target.value, r.max)}
                 placeholder="—"
               />

@@ -63,12 +63,27 @@ export interface Submission {
   auto_collected?: boolean
 }
 
-export const RUBRIC: { key: string; label: string; max: number }[] = [
-  { key: 'correctness',  label: 'Correctness',  max: 10 },
-  { key: 'design',       label: 'Design / UI',  max: 10 },
-  { key: 'code_quality', label: 'Code Quality', max: 10 },
+export type RubricCriterion = { key: string; label: string; max: number; desc?: string }
+
+export const HTML_RUBRIC: RubricCriterion[] = [
+  { key: 'correctness',  label: 'Correctness',  max: 10, desc: 'Met the stated requirements; expected elements/sections present and not broken.' },
+  { key: 'design',       label: 'Design / UI',  max: 10, desc: 'Visual appeal, consistent styling, Flexbox/Grid usage, responsive layout.' },
+  { key: 'code_quality', label: 'Code Quality', max: 10, desc: 'Semantic markup, well-named classes, clean structure, no obvious bugs.' },
 ]
-export const RUBRIC_MAX = RUBRIC.reduce((n, r) => n + r.max, 0)
+
+export const REACT_RUBRIC: RubricCriterion[] = [
+  { key: 'correctness',   label: 'Correctness',   max: 10, desc: 'Met the stated requirements; expected features present and the app renders without errors.' },
+  { key: 'functionality', label: 'Functionality', max: 10, desc: 'State, data flow, user interactions and conditional rendering actually work.' },
+  { key: 'code_quality',  label: 'Code Quality',  max: 10, desc: 'Component structure, hooks used correctly, clean naming, no obvious bugs.' },
+]
+
+export function rubricFor(projectType: ProjectType | undefined | null): RubricCriterion[] {
+  return projectType === 'react' ? REACT_RUBRIC : HTML_RUBRIC
+}
+
+// Back-compat: default export used by code that doesn't know the project type.
+export const RUBRIC: RubricCriterion[] = HTML_RUBRIC
+export const RUBRIC_MAX = HTML_RUBRIC.reduce((n, r) => n + r.max, 0)
 
 export interface Evaluation {
   id: string
