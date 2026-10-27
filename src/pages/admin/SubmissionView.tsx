@@ -32,6 +32,7 @@ export default function SubmissionView() {
   const rubricMax = useMemo(() => rubric.reduce((n, r) => n + r.max, 0), [rubric])
   const [scores, setScores] = useState<Record<string, string>>({})
   const [feedback, setFeedback] = useState('')
+  const [criterionFeedback, setCriterionFeedback] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -63,8 +64,10 @@ export default function SubmissionView() {
         setEvalRow(e)
         setFeedback(e.feedback || '')
         setScores(Object.fromEntries(rubricForThis.map(r => [r.key, e.scores?.[r.key] != null ? String(e.scores[r.key]) : ''])))
+        setCriterionFeedback(Object.fromEntries(rubricForThis.map(r => [r.key, e.feedback_by_criterion?.[r.key] || ''])))
       } else {
         setScores(Object.fromEntries(rubricForThis.map(r => [r.key, ''])))
+        setCriterionFeedback(Object.fromEntries(rubricForThis.map(r => [r.key, ''])))
       }
     })()
   }, [id])
@@ -94,6 +97,7 @@ export default function SubmissionView() {
       total,
       max_total: rubricMax,
       feedback,
+      feedback_by_criterion: Object.fromEntries(rubric.map(r => [r.key, criterionFeedback[r.key] || ''])),
       graded_by: profile.id,
       graded_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -117,6 +121,7 @@ export default function SubmissionView() {
     setEvalRow(null)
     setFeedback('')
     setScores(Object.fromEntries(rubric.map(r => [r.key, ''])))
+    setCriterionFeedback(Object.fromEntries(rubric.map(r => [r.key, ''])))
     setSavedAt(null)
   }
 
@@ -185,7 +190,7 @@ export default function SubmissionView() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {rubric.map(r => (
-            <div key={r.key}>
+            <div key={r.key} className="space-y-1.5">
               <label className="label" title={r.desc}>{r.label} (0–{r.max})</label>
               <input
                 type="number"
@@ -197,18 +202,25 @@ export default function SubmissionView() {
                 onChange={e => setScore(r.key, e.target.value, r.max)}
                 placeholder="—"
               />
+              <textarea
+                className="input text-xs"
+                rows={3}
+                value={criterionFeedback[r.key] ?? ''}
+                onChange={e => setCriterionFeedback(s => ({ ...s, [r.key]: e.target.value }))}
+                placeholder={`Why this score for ${r.label.toLowerCase()}…`}
+              />
             </div>
           ))}
         </div>
 
         <div>
-          <label className="label">Feedback for the student</label>
+          <label className="label">Overall summary (optional)</label>
           <textarea
             className="input"
-            rows={4}
+            rows={2}
             value={feedback}
             onChange={e => setFeedback(e.target.value)}
-            placeholder="What worked, what to improve…"
+            placeholder="One-sentence takeaway for the student."
           />
         </div>
 

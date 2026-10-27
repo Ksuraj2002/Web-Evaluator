@@ -97,10 +97,16 @@ create table if not exists public.evaluations (
   total numeric not null default 0,
   max_total numeric not null default 30,
   feedback text not null default '',
+  -- Per-criterion feedback keyed by rubric key, e.g.
+  -- {"correctness":"...","design":"...","code_quality":"..."}
+  feedback_by_criterion jsonb not null default '{}'::jsonb,
   graded_by uuid references public.profiles(id) on delete set null,
   graded_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- Keep an older deployed table in sync (idempotent).
+alter table public.evaluations
+  add column if not exists feedback_by_criterion jsonb not null default '{}'::jsonb;
 create index if not exists evaluations_submission_idx on public.evaluations (submission_id);
 
 -- Server-side autosave of in-progress work. Survives browser/device changes.

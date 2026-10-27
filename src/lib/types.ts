@@ -104,6 +104,7 @@ export interface Evaluation {
   total: number
   max_total: number
   feedback: string
+  feedback_by_criterion: Record<string, string>
   graded_by: string | null
   graded_at: string
   updated_at: string
