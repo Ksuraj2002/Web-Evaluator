@@ -81,6 +81,12 @@ export function rubricFor(projectType: ProjectType | undefined | null): RubricCr
   return projectType === 'react' ? REACT_RUBRIC : HTML_RUBRIC
 }
 
+export type Course = 'WEB 101' | 'WEB 301'
+export const COURSES: Course[] = ['WEB 101', 'WEB 301']
+export function courseFor(projectType: ProjectType | undefined | null): Course {
+  return projectType === 'react' ? 'WEB 301' : 'WEB 101'
+}
+
 // Back-compat: default export used by code that doesn't know the project type.
 export const RUBRIC: RubricCriterion[] = HTML_RUBRIC
 export const RUBRIC_MAX = HTML_RUBRIC.reduce((n, r) => n + r.max, 0)

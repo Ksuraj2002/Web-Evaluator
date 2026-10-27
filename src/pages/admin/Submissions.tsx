@@ -1,28 +1,31 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import type { Submission, Assignment, Project, Profile, Evaluation } from '../../lib/types'
+import type { Submission, Assignment, Project, Profile, Evaluation, Course } from '../../lib/types'
+import { COURSES, courseFor } from '../../lib/types'
 
 type Row = Submission & {
-  assignment: Assignment & { project: Pick<Project, 'title'> }
+  assignment: Assignment & { project: Pick<Project, 'title' | 'project_type'> }
   student: Profile | null
   evaluation: Pick<Evaluation, 'total' | 'max_total' | 'graded_at'> | null
 }
 
 type GradeFilter = 'all' | 'graded' | 'ungraded'
+type CourseFilter = 'all' | Course
 
 export default function Submissions() {
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState('')
   const [gradeFilter, setGradeFilter] = useState<GradeFilter>('all')
+  const [courseFilter, setCourseFilter] = useState<CourseFilter>('all')
 
   useEffect(() => {
     supabase
       .from('submissions')
       // profiles(*) rather than a column list, so a missing optional column
       // (e.g. uid before its migration runs) can't break the list.
-      .select('*, assignment:assignments(*, project:projects(title)), student:profiles(*), evaluation:evaluations(total,max_total,graded_at)')
+      .select('*, assignment:assignments(*, project:projects(title, project_type)), student:profiles(*), evaluation:evaluations(total,max_total,graded_at)')
       .order('submitted_at', { ascending: false })
       .then(({ data }) => {
         const normalized = ((data as unknown as (Omit<Row, 'evaluation'> & { evaluation: Row['evaluation'] | Row['evaluation'][] })[]) || []).map(r => ({
@@ -41,9 +44,17 @@ export default function Submissions() {
     ungraded: rows.filter(r => !r.evaluation).length,
   }), [rows])
 
+  const courseCounts = useMemo(() => {
+    const c: Record<string, number> = { all: rows.length }
+    for (const course of COURSES) c[course] = 0
+    for (const r of rows) c[courseFor(r.assignment.project.project_type)] = (c[courseFor(r.assignment.project.project_type)] || 0) + 1
+    return c
+  }, [rows])
+
   const filtered = rows.filter(r => {
     if (gradeFilter === 'graded' && !r.evaluation) return false
     if (gradeFilter === 'ungraded' && r.evaluation) return false
+    if (courseFilter !== 'all' && courseFor(r.assignment.project.project_type) !== courseFilter) return false
     if (!q) return true
     const hay = [
       r.student?.email, r.student?.full_name, r.student?.uid, r.student?.campus,
@@ -51,6 +62,16 @@ export default function Submissions() {
     ].filter(Boolean).join(' ').toLowerCase()
     return hay.includes(q.toLowerCase())
   })
+
+  const grouped = useMemo(() => {
+    const map = new Map<Course, Row[]>()
+    for (const course of COURSES) map.set(course, [])
+    for (const r of filtered) {
+      const course = courseFor(r.assignment.project.project_type)
+      map.get(course)!.push(r)
+    }
+    return [...map.entries()].filter(([, items]) => items.length > 0)
+  }, [filtered])
 
   return (
     <div className="space-y-3">
@@ -67,6 +88,17 @@ export default function Submissions() {
             </button>
           ))}
         </div>
+        <div className="flex items-center gap-1 text-xs">
+          {(['all', ...COURSES] as CourseFilter[]).map(c => (
+            <button
+              key={c}
+              onClick={() => setCourseFilter(c)}
+              className={`px-2 py-1 rounded border ${courseFilter === c ? 'bg-vs-accent text-white border-vs-accent' : 'border-vs-border text-vs-mute hover:text-vs-text'}`}
+            >
+              {c === 'all' ? 'All courses' : c} <span className="opacity-70">({courseCounts[c] ?? 0})</span>
+            </button>
+          ))}
+        </div>
         <input
           className="input max-w-sm ml-auto"
           placeholder="Search name, UID, email, campus, section, project…"
@@ -76,9 +108,16 @@ export default function Submissions() {
       </div>
       {loading ? <div className="text-vs-mute">Loading…</div> :
         filtered.length === 0 ? <div className="text-vs-mute">No submissions{q ? ' match.' : ' yet.'}</div> :
-        <div className="space-y-2">
-          {filtered.map(r => (
-            <div key={r.id} className="card flex items-center justify-between gap-4">
+        <div className="space-y-6">
+          {grouped.map(([course, items]) => (
+            <div key={course} className="space-y-2">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-vs-mute">
+                <span>{course}</span>
+                <span className="opacity-60">·</span>
+                <span>{items.length}</span>
+              </div>
+              {items.map(r => (
+                <div key={r.id} className="card flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="text-sm font-medium">{r.assignment.project.title}</div>
                 <div className="text-sm text-vs-text">
@@ -111,6 +150,8 @@ export default function Submissions() {
                   {r.evaluation ? 'Review' : 'Grade'}
                 </Link>
               </div>
+            </div>
+              ))}
             </div>
           ))}
         </div>
