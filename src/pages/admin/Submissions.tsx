@@ -2,12 +2,67 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import type { Submission, Assignment, Project, Profile, Evaluation, Course, ExamGroup } from '../../lib/types'
-import { COURSES, courseFor, EXAM_GROUPS, examGroupFor } from '../../lib/types'
+import { COURSES, courseFor, EXAM_GROUPS, examGroupFor, rubricFor } from '../../lib/types'
 
 type Row = Submission & {
   assignment: Assignment & { project: Pick<Project, 'title' | 'project_type'> }
   student: Profile | null
-  evaluation: Pick<Evaluation, 'total' | 'max_total' | 'graded_at'> | null
+  evaluation: Pick<Evaluation, 'total' | 'max_total' | 'graded_at' | 'scores' | 'feedback' | 'feedback_by_criterion'> | null
+}
+
+function csvCell(v: unknown): string {
+  const s = v == null ? '' : String(v)
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+function downloadCsv(filename: string, header: string[], rows: string[][]) {
+  const csv = [header, ...rows].map(r => r.map(csvCell).join(',')).join('\n')
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+function exportCourse(course: Course, rows: Row[]) {
+  const sample = rows.find(r => r.assignment.project.project_type != null)
+  const rubric = rubricFor(sample?.assignment.project.project_type)
+  const header = [
+    'Student Name', 'UID', 'Email', 'Campus', 'Section', 'Semester',
+    'Project', 'Submitted At', 'Auto-collected',
+    ...rubric.flatMap(c => [`${c.label} (/${c.max})`, `${c.label} feedback`]),
+    'Total', 'Max', 'Graded At', 'Overall Summary',
+  ]
+  const data = rows.map(r => {
+    const ev = r.evaluation
+    const scores = ev?.scores || {}
+    const fbc = ev?.feedback_by_criterion || {}
+    return [
+      r.student?.full_name || '',
+      r.student?.uid || '',
+      r.student?.email || r.assignment.assignee_email || '',
+      r.student?.campus || '',
+      r.student?.section || '',
+      r.student?.semester || '',
+      r.assignment.project.title,
+      new Date(r.submitted_at).toISOString(),
+      r.auto_collected ? 'yes' : '',
+      ...rubric.flatMap(c => [
+        scores[c.key] != null ? String(scores[c.key]) : '',
+        fbc[c.key] || '',
+      ]),
+      ev?.total != null ? String(ev.total) : '',
+      ev?.max_total != null ? String(ev.max_total) : '',
+      ev?.graded_at ? new Date(ev.graded_at).toISOString() : '',
+      ev?.feedback || '',
+    ]
+  })
+  const stamp = new Date().toISOString().slice(0, 10)
+  downloadCsv(`${course.replace(' ', '-')}-submissions-${stamp}.csv`, header, data)
 }
 
 type GradeFilter = 'all' | 'graded' | 'ungraded'
@@ -27,7 +82,7 @@ export default function Submissions() {
       .from('submissions')
       // profiles(*) rather than a column list, so a missing optional column
       // (e.g. uid before its migration runs) can't break the list.
-      .select('*, assignment:assignments(*, project:projects(title, project_type)), student:profiles(*), evaluation:evaluations(total,max_total,graded_at)')
+      .select('*, assignment:assignments(*, project:projects(title, project_type)), student:profiles(*), evaluation:evaluations(total,max_total,graded_at,scores,feedback,feedback_by_criterion)')
       .order('submitted_at', { ascending: false })
       .then(({ data }) => {
         const normalized = ((data as unknown as (Omit<Row, 'evaluation'> & { evaluation: Row['evaluation'] | Row['evaluation'][] })[]) || []).map(r => ({
@@ -151,6 +206,13 @@ export default function Submissions() {
                     <span>{course}</span>
                     <span className="opacity-60">·</span>
                     <span>{items.length}</span>
+                    <button
+                      onClick={() => exportCourse(course, items)}
+                      className="ml-auto px-2 py-0.5 rounded border border-vs-border normal-case tracking-normal text-vs-mute hover:text-vs-text"
+                      title={`Download ${course} rows as CSV`}
+                    >
+                      Export CSV
+                    </button>
                   </div>
                   {items.map(r => (
                 <div key={r.id} className="card flex items-center justify-between gap-4">
