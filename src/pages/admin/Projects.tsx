@@ -11,14 +11,46 @@ const REACT_STARTER = {
   'styles.css': `body { margin: 0; }\n`,
 }
 
+// Persist the create-form draft so switching to another admin tab
+// (Assignments / Submissions) and back doesn't wipe what the user typed.
+const DRAFT_KEY = 'admin:newProjectDraft:v1'
+type Draft = { title: string; desc: string; type: ProjectType; templateId: string }
+function loadDraft(): Draft {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY)
+    if (!raw) return { title: '', desc: '', type: 'html', templateId: '' }
+    const d = JSON.parse(raw) as Partial<Draft>
+    return {
+      title: d.title ?? '',
+      desc: d.desc ?? '',
+      type: d.type === 'react' ? 'react' : 'html',
+      templateId: d.templateId ?? '',
+    }
+  } catch {
+    return { title: '', desc: '', type: 'html', templateId: '' }
+  }
+}
+
 export default function Projects() {
   const [rows, setRows] = useState<Project[]>([])
-  const [title, setTitle] = useState('')
-  const [desc, setDesc] = useState('')
-  const [type, setType] = useState<ProjectType>('html')
-  const [templateId, setTemplateId] = useState<string>('')  // '' = no template
+  const initial = loadDraft()
+  const [title, setTitle] = useState(initial.title)
+  const [desc, setDesc] = useState(initial.desc)
+  const [type, setType] = useState<ProjectType>(initial.type)
+  const [templateId, setTemplateId] = useState<string>(initial.templateId)
   const [busy, setBusy] = useState(false)
   const [bulkBusy, setBulkBusy] = useState(false)
+
+  // Save draft on every change; clear it after a successful create.
+  useEffect(() => {
+    try {
+      if (!title && !desc && !templateId && type === 'html') {
+        sessionStorage.removeItem(DRAFT_KEY)
+      } else {
+        sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ title, desc, type, templateId }))
+      }
+    } catch { /* storage disabled — ignore */ }
+  }, [title, desc, type, templateId])
 
   function applyTemplate(id: string) {
     setTemplateId(id)
@@ -55,7 +87,9 @@ export default function Projects() {
     const { error } = await supabase.from('projects').insert(payload)
     setBusy(false)
     if (error) return alert(error.message)
-    setTitle(''); setDesc(''); setType('html'); setTemplateId(''); load()
+    setTitle(''); setDesc(''); setType('html'); setTemplateId('')
+    try { sessionStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
+    load()
   }
 
   async function importAllWeb301() {
